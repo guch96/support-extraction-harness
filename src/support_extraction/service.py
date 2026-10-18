@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,15 +31,17 @@ class InputError(ValueError):
 
 class ExtractionService:
     @classmethod
-    async def open(cls, directory: Path, model_factory):
+    async def open(cls, directory: Path, model_factory, *, clock=time.time):
         service = cls()
-        service.store = SQLiteStore(Path(directory) / "audit.sqlite3")
+        service.store = SQLiteStore(Path(directory) / "audit.sqlite3", clock=clock)
         path = Path(directory) / "checkpoints.sqlite3"
         path.touch(mode=0o600, exist_ok=True)
         os.chmod(path, 0o600)
         service.checkpoint_connection = await aiosqlite.connect(path)
         service.checkpointer = AsyncSqliteSaver(service.checkpoint_connection)
         service.model_factory = model_factory
+        service.store.recover_interrupted()
+        await service.maintenance()
         return service
 
     async def close(self):
@@ -46,10 +49,26 @@ class ExtractionService:
         self.store.close()
 
     async def restore(self, session_id):
-        return self.store.restore(session_id)
+        await self.maintenance()
+        try:
+            return self.store.restore(session_id)
+        except LookupError as exc:
+            raise InputError(str(exc)) from None
 
     async def review(self, review_id, *, raw=False):
+        await self.maintenance()
         review = self.store.review(review_id)
+        cutoff = self.store.clock() - 7 * 86400
+        for source in review["sources"]:
+            source["raw_status"] = "EXPIRED" if source["created_at"] <= cutoff else "AVAILABLE"
+        for attempt in review["attempts"]:
+            attempt["raw_status"] = (
+                "EXPIRED"
+                if attempt["started_at"] <= cutoff
+                else "AVAILABLE"
+                if attempt["raw"]
+                else "UNAVAILABLE"
+            )
         if not raw:
             for source in review["sources"]:
                 source.pop("raw_text", None)
@@ -57,7 +76,24 @@ class ExtractionService:
                 attempt.pop("raw", None)
         return review
 
+    async def reviews(self):
+        await self.maintenance()
+        return self.store.reviews()
+
+    async def maintenance(self):
+        for session_id in self.store.cleanup():
+            await self.clear(session_id)
+
+    async def clear(self, session_id):
+        try:
+            threads = self.store.clear(session_id)
+        except LookupError as exc:
+            raise InputError(str(exc)) from None
+        for thread in threads:
+            await self.checkpointer.adelete_thread(thread)
+
     async def submit(self, submission: Submission):
+        await self.maintenance()
         request_id = identifier()
         try:
             session_id, task_id = self.store.reserve(

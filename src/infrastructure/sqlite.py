@@ -6,6 +6,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from harness.contracts import RunResult
+
 
 def identifier():
     return uuid.uuid4().hex
@@ -18,6 +20,7 @@ class SQLiteStore:
         path.touch(mode=0o600, exist_ok=True)
         os.chmod(path, 0o600)
         self.clock = clock
+        self.session_ttl = 7 * 86400
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
@@ -70,6 +73,8 @@ class SQLiteStore:
             session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
             if session is None:
                 raise LookupError("SESSION_NOT_FOUND")
+            if session["cleared"] or self.clock() - session["last_used"] >= self.session_ttl:
+                raise LookupError("SESSION_EXPIRED")
             task_id = task_id or (None if new_task else session["current_task_id"])
             if (
                 task_id is not None
@@ -141,6 +146,8 @@ class SQLiteStore:
         session = self.conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
         if session is None:
             raise LookupError("SESSION_NOT_FOUND")
+        if session["cleared"] or self.clock() - session["last_used"] >= self.session_ttl:
+            raise LookupError("SESSION_EXPIRED")
         with self.transaction() as db:
             db.execute("UPDATE sessions SET last_used=? WHERE id=?", (self.clock(), session_id))
         result = dict(session)
@@ -167,6 +174,74 @@ class SQLiteStore:
     def run_started(self, run):
         with self.transaction() as db:
             db.execute("UPDATE runs SET status='RUNNING' WHERE id=?", (run.request_id,))
+
+    def recover_interrupted(self):
+        runs = self.conn.execute(
+            "SELECT * FROM runs WHERE status IN ('PREPARING','RUNNING')"
+        ).fetchall()
+        for run in runs:
+            with self.transaction() as db:
+                db.execute(
+                    "UPDATE attempts SET error_code='INTERRUPTED' "
+                    "WHERE request_id=? AND latency_ms IS NULL",
+                    (run["id"],),
+                )
+            self.run_finished(
+                RunResult(
+                    session_id=run["session_id"],
+                    task_id=run["task_id"],
+                    request_id=run["id"],
+                    outcome="FALLBACK",
+                    data=None,
+                    model_calls=run["model_calls"],
+                    repair_count=run["repair_count"],
+                    error_code="INTERRUPTED",
+                )
+            )
+
+    def reviews(self):
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT review_id,session_id,task_id,id AS request_id,error_code,"
+                "model_calls,repair_count,created_at,'PENDING' AS status "
+                "FROM runs WHERE review_id IS NOT NULL ORDER BY created_at DESC"
+            )
+        ]
+
+    def clear(self, session_id):
+        with self.transaction() as db:
+            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
+                raise LookupError("SESSION_NOT_FOUND")
+            tasks = [
+                dict(row)
+                for row in db.execute(
+                    "SELECT id,active_request FROM tasks WHERE session_id=?", (session_id,)
+                )
+            ]
+            if any(task["active_request"] for task in tasks):
+                raise LookupError("TASK_BUSY")
+            db.execute("UPDATE sessions SET cleared=1 WHERE id=?", (session_id,))
+            for task in tasks:
+                db.execute("UPDATE sources SET safe_text=NULL WHERE task_id=?", (task["id"],))
+        return [f"{session_id}:{task['id']}:extractor" for task in tasks]
+
+    def cleanup(self):
+        cutoff = self.clock() - 7 * 86400
+        with self.transaction() as db:
+            db.execute("UPDATE sources SET raw_text=NULL WHERE created_at<=?", (cutoff,))
+            db.execute("UPDATE attempts SET raw=NULL WHERE started_at<=?", (cutoff,))
+            expired = [
+                row[0]
+                for row in db.execute(
+                    "SELECT id FROM sessions WHERE cleared=0 AND last_used<=? "
+                    "AND NOT EXISTS (SELECT 1 FROM tasks WHERE session_id=sessions.id "
+                    "AND active_request IS NOT NULL)",
+                    (self.clock() - self.session_ttl,),
+                )
+            ]
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return expired
 
     def attempt_started(self, request_id, attempt):
         with self.transaction() as db:
