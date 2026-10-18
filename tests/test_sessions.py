@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from conftest import ScriptedModel
 
+from harness.contracts import ServiceError
 from support_extraction.service import ExtractionService, InputError, Submission
 
 
@@ -175,5 +176,61 @@ async def test_crashed_run_is_reviewed_on_startup_without_replaying_model(tmp_pa
         assert model.calls == []
         restored = await app.restore(review["session_id"])
         assert restored["sources"][0]["text"] == "崩溃前已保存的支持对话。"
+    finally:
+        await app.close()
+
+
+async def test_oversized_supplement_is_rejected_without_appending(tmp_path, valid_json):
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model, max_source_chars=20)
+    try:
+        result = await app.submit(Submission(text="客户重复扣款。"))
+        with pytest.raises(InputError, match="SOURCE_TOO_LARGE"):
+            await app.submit(Submission(session_id=result.session_id, text="很" * 20))
+        restored = await app.restore(result.session_id)
+        assert [s["text"] for s in restored["sources"]] == ["客户重复扣款。"]
+        assert len(model.calls) == 1
+    finally:
+        await app.close()
+
+
+@pytest.mark.parametrize(
+    "submission",
+    [
+        Submission(),
+        Submission(text="  "),
+        Submission(text="支付失败", record_id="TX-001"),
+        Submission(text="支付失败", task_id="orphan"),
+        Submission(text="支付失败", new_task=True, task_id="ambiguous"),
+    ],
+)
+async def test_invalid_submission_never_reaches_model(tmp_path, valid_json, submission):
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model)
+    try:
+        with pytest.raises(InputError, match="INVALID_INPUT"):
+            await app.submit(submission)
+        assert model.calls == []
+    finally:
+        await app.close()
+
+
+async def test_internal_failure_preserves_source_and_releases_task_for_next_submission(
+    tmp_path, valid_json
+):
+    model = ScriptedModel(
+        responses=[valid_json, RuntimeError("private provider failure"), valid_json]
+    )
+    app = await ExtractionService.open(tmp_path, lambda: model)
+    try:
+        first = await app.submit(Submission(text="初次对话。"))
+        with pytest.raises(ServiceError) as caught:
+            await app.submit(Submission(session_id=first.session_id, text="必须保留的修正。"))
+        assert caught.value.source_saved is True
+        assert "private provider failure" not in str(caught.value)
+        next_result = await app.submit(Submission(session_id=first.session_id, text="继续处理。"))
+        assert next_result.outcome == "SUCCESS"
+        assert "必须保留的修正" in model.calls[-1][1].content
+        assert await app.reviews() == []
     finally:
         await app.close()

@@ -67,7 +67,17 @@ class SQLiteStore:
             db.execute("INSERT INTO sessions(id,last_used) VALUES (?,?)", (session, self.clock()))
         return session
 
-    def reserve(self, session_id, task_id, new_task, request_id):
+    def reserve(
+        self,
+        session_id,
+        task_id,
+        new_task,
+        request_id,
+        *,
+        source_length=0,
+        max_source_chars=20000,
+        max_turns=20,
+    ):
         session_id = session_id or self.new_session()
         with self.transaction() as db:
             session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
@@ -93,6 +103,12 @@ class SQLiteStore:
             if task_id is None:
                 task_id = identifier()
                 db.execute("INSERT INTO tasks(id,session_id) VALUES (?,?)", (task_id, session_id))
+            size, turns = db.execute(
+                "SELECT COALESCE(SUM(original_length),0),COUNT(*) FROM sources WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if size + source_length > max_source_chars or turns >= max_turns:
+                raise LookupError("SOURCE_TOO_LARGE")
             db.execute(
                 "UPDATE sessions SET current_task_id=?,last_used=? WHERE id=?",
                 (task_id, self.clock(), session_id),
@@ -135,7 +151,7 @@ class SQLiteStore:
             dict(row)
             for row in self.conn.execute(
                 "SELECT * FROM sources WHERE task_id=? AND sequence<=? ORDER BY sequence",
-                (task_id, revision or 2**31),
+                (task_id, revision if revision is not None else 2**31),
             )
         ]
 
@@ -287,6 +303,11 @@ class SQLiteStore:
                 (bool(result.data and result.data["detected_pii"]), result.task_id),
             )
         return review_id
+
+    def run_failed(self, request_id, code):
+        with self.transaction() as db:
+            db.execute("UPDATE runs SET status='ERROR',error_code=? WHERE id=?", (code, request_id))
+            db.execute("UPDATE tasks SET active_request=NULL WHERE active_request=?", (request_id,))
 
     def review(self, review_id):
         row = self.conn.execute("SELECT * FROM runs WHERE review_id=?", (review_id,)).fetchone()
