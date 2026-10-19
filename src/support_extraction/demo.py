@@ -1,4 +1,4 @@
-"""Local failing model and fixed text for the人工审核 demo entry.
+"""Local failing model and fixed text for the manual-review demo entry.
 
 This module exists only for :meth:`ExtractionService.seed_review_demo`. It
 never opens a network connection, never reads environment variables and is not
