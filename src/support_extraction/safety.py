@@ -9,6 +9,54 @@ PASSWORD = re.compile(
 )
 TAGS = re.compile(r"<[^>]{0,300}>")
 
+KIND_ORDER = ("card", "national_id", "nric", "password")
+
+
+def _detected_kinds(text: str) -> list[str]:
+    detected = set()
+    remaining = text
+    for kind, pattern in (("nric", NRIC), ("national_id", NATIONAL_ID), ("card", CARD)):
+        if pattern.search(remaining):
+            detected.add(kind)
+            remaining = pattern.sub(" ", remaining)
+    if any(
+        not match.group(1).startswith("[REDACTED_") for match in PASSWORD.finditer(text)
+    ):
+        detected.add("password")
+    return [kind for kind in KIND_ORDER if kind in detected]
+
+
+def scan(text: str, known: tuple[str, ...] = ()) -> dict:
+    """Return safe processing facts for one source: kinds, redactions, tags."""
+    redactions = 0
+    remaining = text
+    for value in sorted(known, key=len, reverse=True):
+        if value:
+            redactions += remaining.count(value)
+            remaining = remaining.replace(value, "[REDACTED_PII]")
+    for pattern, marker in (
+        (NRIC, "[REDACTED_ID]"),
+        (NATIONAL_ID, "[REDACTED_ID]"),
+        (CARD, "[REDACTED_CARD]"),
+    ):
+        remaining, count = pattern.subn(marker, remaining)
+        redactions += count
+    password_redactions = 0
+
+    def _redact_password(match):
+        nonlocal password_redactions
+        if match.group(1).startswith("[REDACTED_"):
+            return match.group(0)
+        password_redactions += 1
+        return match.group(0).replace(match.group(1), "[REDACTED_PASSWORD]")
+
+    PASSWORD.sub(_redact_password, remaining)
+    return {
+        "kinds": _detected_kinds(text),
+        "redactions": redactions + password_redactions,
+        "tags": len(TAGS.findall(text)),
+    }
+
 
 def sensitive_values(text: str) -> tuple[str, ...]:
     found = [m.group(0) for pattern in (NRIC, NATIONAL_ID, CARD) for m in pattern.finditer(text)]

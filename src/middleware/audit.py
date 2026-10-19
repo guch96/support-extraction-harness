@@ -55,6 +55,8 @@ class AuditMiddleware(AgentMiddleware):
             code = model_error_code(exc)
             if code is None:
                 raise
+            if code != "INTERRUPTED":
+                ctx.model_errors.append({"attempt": attempt, "code": code})
             ctx.error_code = code
             if code == "MODEL_CONFIG_ERROR":
                 # A configuration fault is not a fallback candidate: let it reach

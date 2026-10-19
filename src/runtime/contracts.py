@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,7 @@ class RunResult(BaseModel):
     repair_count: int
     review_id: str | None = None
     error_code: str | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def fallback(
@@ -47,6 +48,7 @@ class RunResult(BaseModel):
         *,
         model_calls: int = 0,
         repair_count: int = 0,
+        diagnostics: dict[str, Any] | None = None,
     ) -> "RunResult":
         return cls(
             session_id=session_id,
@@ -56,6 +58,7 @@ class RunResult(BaseModel):
             model_calls=model_calls,
             repair_count=repair_count,
             error_code=error_code,
+            diagnostics=diagnostics or {},
         )
 
 

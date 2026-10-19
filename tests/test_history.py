@@ -74,6 +74,7 @@ async def test_history_returns_each_task_sources_and_runs_in_time_order(
             "source_revision",
             "created_at",
             "review_id",
+            "diagnostics",
         }
         for run in first_task["runs"]
     )

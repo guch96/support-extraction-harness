@@ -20,7 +20,7 @@ from runtime.events import event
 from streaming.events import Phase
 from streaming.phase_sink import PhaseSink
 from support_extraction.policy import contract
-from support_extraction.safety import sanitize, sensitive_values
+from support_extraction.safety import sanitize, scan, sensitive_values
 
 
 @dataclass(frozen=True)
@@ -146,6 +146,7 @@ class ExtractionService:
         ):
             raise InputError("INVALID_INPUT", request_id)
         text = submission.text
+        input_mode = "record" if submission.record_id is not None else "text"
         read_error = None
         if submission.record_id is not None:
             if phases is not None:
@@ -199,15 +200,36 @@ class ExtractionService:
         try:
             if read_error is not None:
                 result = RunResult.fallback(
-                    session_id, task_id, request_id, read_error
+                    session_id,
+                    task_id,
+                    request_id,
+                    read_error,
+                    diagnostics={
+                        "input_mode": input_mode,
+                        "record_id": submission.record_id,
+                        "source_revision": self.store.task(task_id)["revision"],
+                        "pii": {"detected": False, "kinds": [], "redactions": 0},
+                        "tags_neutralized": 0,
+                        "repairs": [],
+                        "model_errors": [{"attempt": 0, "code": read_error}],
+                        "budget": {
+                            "max_calls": contract().max_model_calls,
+                            "model_calls": 0,
+                            "repair_count": 0,
+                        },
+                    },
                 )
                 result.review_id = self.store.run_finished(result)
                 if phases is not None:
                     phases.emit(Phase.FAILED, "未取得合格结果，已转人工审核")
-                event("run_finished", **result.model_dump(exclude={"data"}))
+                event(
+                    "run_finished",
+                    **result.model_dump(exclude={"data", "diagnostics"}),
+                )
                 return result
             try:
                 known = sensitive_values(text)
+                facts = scan(text, known)
                 safe_text = sanitize(text, known)
             except Exception:
                 raise ServiceError("SAFETY_PROCESSING_FAILED", request_id) from None
@@ -243,7 +265,19 @@ class ExtractionService:
                 phase_sink=phases,
                 checkpointer=self.checkpointer,
             )
-            return await harness.run(run)
+            return await harness.run(
+                run,
+                diagnostics={
+                    "input_mode": input_mode,
+                    "record_id": submission.record_id,
+                    "pii": {
+                        "detected": bool(facts["kinds"] or facts["redactions"]),
+                        "kinds": facts["kinds"],
+                        "redactions": facts["redactions"],
+                    },
+                    "tags_neutralized": facts["tags"],
+                },
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
