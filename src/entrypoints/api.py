@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict
 
 from harness.contracts import ServiceError
 from infrastructure.model import configured_model
+from infrastructure.records import FixtureSource
 from infrastructure.sqlite import identifier
+from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
 from support_extraction.service import ExtractionService, InputError, Submission
 
 
@@ -22,13 +24,27 @@ class ExtractionRequest(BaseModel):
     new_task: bool = False
 
 
-def create_app(*, directory=None, model_factory=None, ui=False, max_source_chars=20000):
+def create_app(
+    *,
+    directory=None,
+    model_factory=None,
+    ui=False,
+    max_source_chars=20000,
+    source_reader=None,
+    allowed_records=BENCHMARK_RECORD_IDS,
+):
     directory = directory or os.getenv("HARNESS_DATA_DIR", "runtime")
     model_factory = model_factory or configured_model
+    source_reader = source_reader or FixtureSource(FIXTURE_PATH, allowed_records)
+
     @asynccontextmanager
     async def lifespan(app):
         app.state.service = await ExtractionService.open(
-            Path(directory), model_factory, max_source_chars=max_source_chars
+            Path(directory),
+            model_factory,
+            max_source_chars=max_source_chars,
+            source_reader=source_reader,
+            allowed_records=allowed_records,
         )
         try:
             yield
