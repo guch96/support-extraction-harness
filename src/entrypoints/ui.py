@@ -8,7 +8,7 @@ Gradio is imported lazily inside :func:`mount_ui` only.
 import json
 from typing import Any
 
-from harness.contracts import RunResult, ServiceError
+from runtime.contracts import RunResult, ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, SAMPLE_RECORD_IDS
 from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService, InputError, Submission

@@ -6,7 +6,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from harness.contracts import RunResult
+from runtime.contracts import RunResult
 
 RAW_RETENTION_SECONDS = 7 * 86400
 

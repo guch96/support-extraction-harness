@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from harness.contracts import SourceUnavailable
+from runtime.contracts import SourceUnavailable
 
 
 class FixtureSource:

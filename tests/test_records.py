@@ -1,8 +1,8 @@
 import pytest
 from conftest import ScriptedModel
 
-from harness.contracts import ServiceError, SourceUnavailable
 from infrastructure.records import FixtureSource
+from runtime.contracts import ServiceError, SourceUnavailable
 from support_extraction.service import ExtractionService, InputError, Submission
 
 

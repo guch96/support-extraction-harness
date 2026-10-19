@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from conftest import ScriptedModel
 
-from harness.contracts import ServiceError
+from runtime.contracts import ServiceError
 from support_extraction.service import ExtractionService, InputError, Submission
 
 

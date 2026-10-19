@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from harness.contracts import OutputContract
+from runtime.contracts import OutputContract
 from support_extraction.safety import sanitize
 
 

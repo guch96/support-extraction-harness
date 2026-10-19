@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Any
 
-from harness.contracts import RunInput
+from runtime.contracts import RunInput
 
 logger = logging.getLogger("support_harness.events")
 

@@ -2,7 +2,7 @@ import json
 import secrets
 from typing import Any
 
-from harness.contracts import OutputContract, RunInput, ServiceError
+from runtime.contracts import OutputContract, RunInput, ServiceError
 
 
 def safe_json(value: Any) -> str:

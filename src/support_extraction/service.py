@@ -7,16 +7,16 @@ from pathlib import Path
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from harness.contracts import (
+from infrastructure.sqlite import RAW_RETENTION_SECONDS, SQLiteStore, identifier
+from runtime.contracts import (
     RunInput,
     RunResult,
     ServiceError,
     SourceUnavailable,
     extractor_thread,
 )
-from harness.events import event
-from harness.runtime import Harness
-from infrastructure.sqlite import RAW_RETENTION_SECONDS, SQLiteStore, identifier
+from runtime.engine import Harness
+from runtime.events import event
 from support_extraction.policy import contract
 from support_extraction.safety import sanitize, sensitive_values
 

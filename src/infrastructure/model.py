@@ -2,7 +2,7 @@ import os
 
 from langchain_openai import ChatOpenAI
 
-from harness.contracts import ServiceError
+from runtime.contracts import ServiceError
 
 MODEL_PARAMETERS = {
     "max_retries": 0,

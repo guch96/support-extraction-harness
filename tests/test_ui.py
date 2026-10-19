@@ -1,9 +1,9 @@
 from conftest import ScriptedModel
 
 from entrypoints import ui
-from harness.contracts import RunResult, ServiceError
 from infrastructure.model import configured_model
 from infrastructure.records import FixtureSource
+from runtime.contracts import RunResult, ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
 from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService
