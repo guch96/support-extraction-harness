@@ -151,6 +151,60 @@ curl -sS 'http://127.0.0.1:8000/reviews/<review_id>?include_raw=true'
 
 依赖方向是：`entrypoints` → `support_extraction` → `harness`；`infrastructure` 实现接口并由外层注入。`harness` 不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
 
+#### 架构图
+
+```mermaid
+flowchart TB
+    subgraph ENTRY["入口层 entrypoints"]
+        SERVE["serve.py<br/>127.0.0.1 + 逐行 JSON 日志"]
+        API["api.py<br/>FastAPI 路由与 HTTP 映射"]
+        UI["ui.py<br/>Gradio /ui（调用服务层）"]
+    end
+
+    subgraph APP["应用层 support_extraction"]
+        SVC["ExtractionService<br/>授权取数 · 先保存来源 · 维护"]
+        POLICY["policy.py<br/>六字段 schema + 字段规则"]
+        SAFETY["safety.py<br/>PII 检测 · 脱敏 · 标签中和"]
+        BENCH["benchmark.py + fixtures<br/>只读基准与白名单"]
+        EVAL["evaluation.py<br/>真实模型评测命令"]
+    end
+
+    subgraph CORE["Harness 核心 harness"]
+        HARNESS["runtime.Harness<br/>来源快照 → 图执行 → 结果收口"]
+        MW["RecoveryMiddleware<br/>预算 · 超时 · 校验 · 修复跳转"]
+        VALID["validation.validate_response"]
+        CTX["context<br/>来源包 / 修复包投影"]
+        EVENTS["events<br/>单行 JSON 事件"]
+    end
+
+    subgraph INFRA["基础设施 infrastructure"]
+        MODEL["model.py<br/>ChatOpenAI max_retries=0"]
+        RECORDS["records.FixtureSource<br/>只读适配器"]
+        STORE[("SQLite<br/>会话/来源/运行/attempt/审核")]
+        CHECKPOINT[("SQLite checkpoint")]
+    end
+
+    SERVE --> API
+    API --> SVC
+    UI --> SVC
+    EVAL --> SVC
+    SVC --> POLICY
+    SVC --> SAFETY
+    SVC --> BENCH
+    SVC --> RECORDS
+    SVC --> STORE
+    SVC --> HARNESS
+    HARNESS --> CTX
+    HARNESS --> MW
+    MW --> VALID
+    MW --> MODEL
+    MW --> EVENTS
+    HARNESS --> CHECKPOINT
+    EVAL --> MODEL
+```
+
+`harness` 只依赖注入的 `AuditSink`、`OutputContract` 与模型句柄；SQLite、FastAPI、Gradio 都在核心之外。
+
 ### 3.2 请求到结果
 
 1. **接收与校验**：`POST /extractions` 严格解析请求体，拒绝未知字段；校验文本/记录二选一以及已提供 ID 的组合。
@@ -161,6 +215,52 @@ curl -sS 'http://127.0.0.1:8000/reviews/<review_id>?include_raw=true'
 6. **模型调用**：提取 Agent 的 `tools=[]`；每次调用记录开始/结束、原始响应、错误码和耗时；单次调用 30 秒、整次运行 90 秒。
 7. **严格校验与修复**：只接受纯 JSON 对象；六字段齐全、类型严格、拒绝额外字段、摘要不超过 200 码点。失败保存原始证据和错误签名，仅把最近一次失败的安全反馈包加入下一次请求；最多额外修复 2 次。
 8. **终止与审核**：通过则 `SUCCESS`（首次）或 `REPAIRED`（修复后）；预算耗尽、输出无效、模型超时/调用失败、运行超时、来源不可用则保存 PENDING 审核项并返回 `FALLBACK`；中断同样保存审核项，但客户端可能已断开、收不到响应；配置、安全、策略或持久化故障返回 500。
+
+#### 消息流
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 调用方
+    participant S as ExtractionService
+    participant DB as SQLite
+    participant H as Harness
+    participant M as RecoveryMiddleware
+    participant L as 模型
+
+    C->>S: POST /extractions（text 或 record_id）
+    S->>S: 校验输入 · 白名单 · 记录最多读取一次
+    S->>S: PII 检测 · 脱敏 · 标签中和
+    S->>DB: 先保存原文与脱敏来源（新来源版本）
+    S->>H: run(完整脱敏来源 · revision · pii_seen)
+    H->>H: 构造 source_material(nonce) 包
+
+    H->>M: 进入图执行
+    M->>L: 调用 1：system(extraction.v1) + 来源包
+    L-->>M: 原始响应
+    M->>M: validate_response
+
+    alt 校验通过
+        M-->>H: Accepted
+        H->>DB: run_finished = SUCCESS / REPAIRED
+        H-->>S: RunResult
+        S-->>C: 200 + 六字段结果
+    else 协议或 schema 错误，且调用次数 < 3
+        M->>DB: 保存原始输出 · 错误签名 · feedback
+        M->>L: 调用 2..3：同一 system + 同一来源包 + repair_feedback(repair.v1)
+        L-->>M: 原始响应
+        M->>M: validate_response
+    else 预算耗尽 / 运行超时
+        M-->>H: Rejected
+        H->>DB: run_finished = FALLBACK + PENDING 审核
+        H-->>S: RunResult(review_id)
+        S-->>C: 200 + FALLBACK(review_id)
+    end
+```
+
+- 首次请求固定两条消息（system + 来源包）；修复请求固定三条（再加最近一次失败的安全反馈包），不回放历史答案或旧修复对话。
+- 模型调用异常：超时/鉴权/连接/限流 → `FALLBACK` + PENDING 审核；模型配置错误（不存在或请求非法）→ 500 `MODEL_CONFIG_ERROR`，不产生审核项。
+- 来源侧：未授权 → 403 且不读取；显式 `SourceUnavailable` → PENDING 审核；其他策略异常 → 500 `SOURCE_POLICY_FAILED`。
 
 ### 3.3 六字段 schema
 
