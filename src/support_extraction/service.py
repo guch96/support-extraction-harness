@@ -127,8 +127,14 @@ class ExtractionService:
         text = submission.text
         read_failed = False
         if submission.record_id is not None:
+            access_started = time.monotonic()
             if submission.record_id not in self.allowed_records or self.source_reader is None:
-                event("source_denied", request_id=request_id, reason="ACCESS_DENIED")
+                event(
+                    "source_denied",
+                    request_id=request_id,
+                    reason="ACCESS_DENIED",
+                    latency_ms=round((time.monotonic() - access_started) * 1000, 3),
+                )
                 raise InputError("ACCESS_DENIED", request_id)
             started = time.monotonic()
             try:
@@ -143,7 +149,8 @@ class ExtractionService:
                 event(
                     "source_read",
                     request_id=request_id,
-                    latency_ms=(time.monotonic() - started) * 1000,
+                    reason="ACCESS_GRANTED",
+                    latency_ms=round((time.monotonic() - started) * 1000, 3),
                     outcome="FAILED" if read_failed else "RECEIVED",
                 )
         try:

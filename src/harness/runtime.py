@@ -13,12 +13,22 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from pydantic import ValidationError
 
 from harness.contracts import AuditSink, OutputContract, RunInput, RunResult, ServiceError
+from harness.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
 
 logger = logging.getLogger("support_harness.events")
 
 
 def event(name: str, **fields: Any) -> None:
     logger.info(json.dumps({"event": name, **fields}, ensure_ascii=False))
+
+
+def correlation(run: RunInput) -> dict[str, Any]:
+    return {
+        "session_id": run.session_id,
+        "task_id": run.task_id,
+        "request_id": run.request_id,
+        "source_revision": run.source_revision,
+    }
 
 
 def safe_json(value: Any) -> str:
@@ -114,27 +124,33 @@ class RecoveryMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request, handler):
         ctx = request.runtime.context
-        remaining = ctx.deadline - time.monotonic()
+        wrapper_start = time.monotonic()
+        remaining = ctx.deadline - wrapper_start
         if remaining <= 0 or ctx.model_calls >= 3:
             ctx.error_code = "BUDGET_EXHAUSTED"
             raise ModelCallFailure()
         messages = ctx.messages()
+        prompt_version = REPAIR_PROMPT_VERSION if ctx.feedback else EXTRACTION_PROMPT_VERSION
         ctx.model_calls += 1
         ctx.repair_count = ctx.model_calls - 1
         attempt = ctx.model_calls
         ctx.audit.attempt_started(ctx.run.request_id, attempt)
-        start = time.monotonic()
+        sdk_latency_ms = 0.0
         raw = None
         code = None
         try:
             async with asyncio.timeout(min(ctx.call_timeout, remaining)):
-                response = await handler(
-                    request.override(
-                        messages=messages,
-                        tools=[],
-                        system_message=SystemMessage(content=ctx.contract.system_prompt),
+                sdk_start = time.monotonic()
+                try:
+                    response = await handler(
+                        request.override(
+                            messages=messages,
+                            tools=[],
+                            system_message=SystemMessage(content=ctx.contract.system_prompt),
+                        )
                     )
-                )
+                finally:
+                    sdk_latency_ms = (time.monotonic() - sdk_start) * 1000
             original = response.result[-1]
             ctx.last_response = original
             raw = original.model_dump_json()
@@ -152,13 +168,18 @@ class RecoveryMiddleware(AgentMiddleware):
             ctx.error_code = code
             raise ModelCallFailure() from None
         finally:
-            elapsed = round((time.monotonic() - start) * 1000, 3)
-            ctx.audit.attempt_finished(ctx.run.request_id, attempt, raw, elapsed, code)
+            wrapper_latency_ms = (time.monotonic() - wrapper_start) * 1000
+            sdk_latency_ms = round(sdk_latency_ms, 3)
+            wrapper_latency_ms = round(wrapper_latency_ms, 3)
+            ctx.audit.attempt_finished(ctx.run.request_id, attempt, raw, sdk_latency_ms, code)
             event(
                 "model_call",
-                request_id=ctx.run.request_id,
+                **correlation(ctx.run),
                 attempt=attempt,
-                latency_ms=elapsed,
+                prompt_version=prompt_version,
+                sdk_latency_ms=sdk_latency_ms,
+                wrapper_latency_ms=wrapper_latency_ms,
+                model_calls=ctx.model_calls,
                 repair_count=ctx.repair_count,
                 error_code=code,
             )
@@ -213,8 +234,9 @@ class RecoveryMiddleware(AgentMiddleware):
         ctx.audit.validation_failed(ctx.run.request_id, ctx.model_calls, ctx.feedback)
         event(
             "validation_failed",
-            request_id=ctx.run.request_id,
+            **correlation(ctx.run),
             attempt=ctx.model_calls,
+            validation_stage=stage,
             error_signature=ctx.feedback["error_signature"],
         )
         ctx.error_code = "OUTPUT_INVALID"
@@ -325,5 +347,9 @@ class Harness:
         result.review_id = self.audit.run_finished(result)
         if result.outcome == "FALLBACK" and not result.review_id:
             raise ServiceError("PERSISTENCE_FAILED", result.request_id)
-        event("run_finished", **result.model_dump(exclude={"data"}))
+        event(
+            "run_finished",
+            **result.model_dump(exclude={"data"}),
+            source_revision=ctx.run.source_revision,
+        )
         return result
