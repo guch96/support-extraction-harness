@@ -71,7 +71,10 @@ class ExtractionService:
 
     async def review(self, review_id, *, raw=False):
         await self.maintenance()
-        review = self.store.review(review_id)
+        try:
+            review = self.store.review(review_id)
+        except LookupError as exc:
+            raise InputError(str(exc)) from None
         cutoff = self.store.clock() - 7 * 86400
         for source in review["sources"]:
             source["raw_status"] = "EXPIRED" if source["created_at"] <= cutoff else "AVAILABLE"
