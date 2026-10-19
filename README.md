@@ -243,7 +243,7 @@ Customer ID: CUST-98234
 - 状态通常为 `SUCCESS`；问题类别 `TECHNICAL`，紧急程度 `HIGH`，客户 ID 为 `null`，检测到 PII 为“是”。
 - 自然语言回答会多一句“材料中发现敏感信息，已脱敏后处理。”。
 - “本次处理”显示“PII：发现 2 类并脱敏 2 处：证件号、密码”（显示顺序与宿主类别顺序一致：卡号、身份证号、证件号、密码）。
-- 页面卡片不显示密码或 NRIC 原值；PII 折叠区只显示类别与计数。
+- 页面卡片不显示密码或 NRIC 原值；“本次处理”折叠区中的 PII 行只显示类别与计数。
 
 **观察点**
 
@@ -639,7 +639,7 @@ sequenceDiagram
     participant S as ExtractionService
     participant DB as SQLite
     participant H as Harness
-    participant M as RecoveryMiddleware
+    participant M as ValidationRepairMiddleware
     participant L as 模型
 
     C->>S: POST /extractions（text 或 record_id）
