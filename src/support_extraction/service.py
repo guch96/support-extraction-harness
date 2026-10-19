@@ -17,6 +17,8 @@ from runtime.contracts import (
 )
 from runtime.engine import Harness
 from runtime.events import event
+from streaming.events import Phase
+from streaming.phase_sink import PhaseSink
 from support_extraction.policy import contract
 from support_extraction.safety import sanitize, sensitive_values
 
@@ -81,6 +83,13 @@ class ExtractionService:
         except LookupError as exc:
             raise InputError(str(exc)) from None
 
+    async def history(self, session_id):
+        await self.maintenance()
+        try:
+            return self.store.history(session_id)
+        except LookupError as exc:
+            raise InputError(str(exc)) from None
+
     async def review(self, review_id, *, raw=False):
         await self.maintenance()
         try:
@@ -121,7 +130,7 @@ class ExtractionService:
         for task_id in task_ids:
             await self.checkpointer.adelete_thread(extractor_thread(session_id, task_id))
 
-    async def submit(self, submission: Submission):
+    async def submit(self, submission: Submission, phases: PhaseSink | None = None):
         await self.maintenance()
         request_id = identifier()
         if (
@@ -139,6 +148,8 @@ class ExtractionService:
         text = submission.text
         read_error = None
         if submission.record_id is not None:
+            if phases is not None:
+                phases.emit(Phase.READING, "正在读取预置记录")
             access_started = time.monotonic()
             if submission.record_id not in self.allowed_records or self.source_reader is None:
                 event(
@@ -224,7 +235,11 @@ class ExtractionService:
                 known,
             )
             harness = Harness(
-                self.model_factory(), contract(), self.store, checkpointer=self.checkpointer
+                self.model_factory(),
+                contract(),
+                self.store,
+                phase_sink=phases,
+                checkpointer=self.checkpointer,
             )
             return await harness.run(run)
         except asyncio.CancelledError:

@@ -21,6 +21,8 @@ from runtime.contracts import (
 from runtime.events import event
 from runtime.failures import ModelCallFailure
 from runtime.state import RunContext
+from streaming.events import Phase
+from streaming.phase_sink import PhaseSink
 
 
 class Harness:
@@ -30,17 +32,20 @@ class Harness:
         contract: OutputContract,
         audit: AuditSink,
         *,
+        phase_sink: PhaseSink | None = None,
         checkpointer=None,
         call_timeout=30.0,
         run_timeout=90.0,
     ):
         self.contract, self.audit = contract, audit
         self.call_timeout, self.run_timeout = call_timeout, run_timeout
+        chat_events = ChatEventsMiddleware(phase_sink)
+        self.phases = chat_events.sink
         self.graph = create_agent(
             model=model,
             tools=[],
             middleware=[
-                ChatEventsMiddleware(),
+                chat_events,
                 BudgetMiddleware(),
                 AuditMiddleware(),
                 ValidationRepairMiddleware(),
@@ -122,6 +127,10 @@ class Harness:
         result.review_id = self.audit.run_finished(result)
         if result.outcome == "FALLBACK" and not result.review_id:
             raise ServiceError("PERSISTENCE_FAILED", result.request_id)
+        if result.outcome == "FALLBACK":
+            self.phases.emit(Phase.FAILED, "未取得合格结果，已转人工审核")
+        else:
+            self.phases.emit(Phase.SUCCEEDED, "提取完成")
         event(
             "run_finished",
             **result.model_dump(exclude={"data"}),
