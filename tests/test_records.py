@@ -135,6 +135,36 @@ async def test_safety_processing_failure_stops_before_model_call(
         await app.close()
 
 
+async def test_output_sanitize_failure_is_a_service_error_without_review(
+    tmp_path, monkeypatch, caplog
+):
+    output = "UNSANITIZED MODEL OUTPUT 密码是 OutputSecret123"
+    model = ScriptedModel(responses=[output, "should not be called"])
+    app = await ExtractionService.open(tmp_path, lambda: model)
+    from support_extraction import policy
+
+    original = policy.sanitize
+
+    def unavailable(text, known=()):
+        if text == output:
+            raise RuntimeError("redaction unavailable")
+        return original(text, known)
+
+    monkeypatch.setattr("support_extraction.policy.sanitize", unavailable)
+    try:
+        with caplog.at_level("INFO", logger="support_harness.events"):
+            with pytest.raises(ServiceError) as caught:
+                await app.submit(Submission(text="密码是 InputSecret123。"))
+        assert caught.value.code == "SAFETY_PROCESSING_FAILED"
+        assert caught.value.source_saved is True
+        assert await app.reviews() == []
+        assert len(model.calls) == 1
+        assert output not in str(model.calls)
+        assert "OutputSecret123" not in caplog.text
+    finally:
+        await app.close()
+
+
 async def test_saved_source_survives_safety_failure_and_error_reports_it(
     tmp_path, valid_json, monkeypatch
 ):

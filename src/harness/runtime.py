@@ -9,7 +9,14 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Syst
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from harness.context import build_repair_message, build_source_message, safe_json
-from harness.contracts import AuditSink, OutputContract, RunInput, RunResult, ServiceError
+from harness.contracts import (
+    AuditSink,
+    OutputContract,
+    RunInput,
+    RunResult,
+    ServiceError,
+    extractor_thread,
+)
 from harness.events import correlation, event
 from harness.failures import ModelCallFailure, model_error_code
 from harness.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
@@ -99,10 +106,16 @@ class RecoveryMiddleware(AgentMiddleware):
             raw = original.model_dump_json()
             # Raw evidence stays in the sink/context, never in the graph checkpoint.
             content = original.content if isinstance(original.content, str) else ""
-            safe = AIMessage(content=ctx.sanitize(content))
+            try:
+                safe_content = ctx.sanitize(content)
+            except Exception:
+                raise ServiceError("SAFETY_PROCESSING_FAILED", ctx.run.request_id) from None
+            safe = AIMessage(content=safe_content)
             return ModelResponse(result=[safe])
         except asyncio.CancelledError:
             code = "INTERRUPTED"
+            raise
+        except ServiceError:
             raise
         except Exception as exc:
             code = model_error_code(exc)
@@ -154,7 +167,7 @@ class RecoveryMiddleware(AgentMiddleware):
         # Protocol errors do not send model-selected tool names/arguments back as instructions.
         previous = message.content if message and isinstance(message.content, str) else ""
         if verdict.stage == "response_protocol":
-            previous = "[INVALID_RESPONSE_PROTOCOL]"
+            previous = previous if previous.strip() else "[INVALID_RESPONSE_PROTOCOL]"
         ctx.feedback = {
             "failed_attempt": ctx.model_calls,
             "validation_stage": verdict.stage,
@@ -231,7 +244,7 @@ class Harness:
                         },
                         config={
                             "configurable": {
-                                "thread_id": f"{run.session_id}:{run.task_id}:extractor"
+                                "thread_id": extractor_thread(run.session_id, run.task_id)
                             },
                             "recursion_limit": 30,
                         },
@@ -254,16 +267,25 @@ class Harness:
             raise ServiceError("INTERNAL_ERROR", run.request_id) from None
 
     def _finish(self, ctx):
-        result = RunResult(
-            session_id=ctx.run.session_id,
-            task_id=ctx.run.task_id,
-            request_id=ctx.run.request_id,
-            outcome=ctx.outcome or "FALLBACK",
-            data=ctx.data if ctx.outcome else None,
-            model_calls=ctx.model_calls,
-            repair_count=ctx.repair_count,
-            error_code=None if ctx.outcome else ctx.error_code or "OUTPUT_INVALID",
-        )
+        if ctx.outcome:
+            result = RunResult(
+                session_id=ctx.run.session_id,
+                task_id=ctx.run.task_id,
+                request_id=ctx.run.request_id,
+                outcome=ctx.outcome,
+                data=ctx.data,
+                model_calls=ctx.model_calls,
+                repair_count=ctx.repair_count,
+            )
+        else:
+            result = RunResult.fallback(
+                ctx.run.session_id,
+                ctx.run.task_id,
+                ctx.run.request_id,
+                ctx.error_code or "OUTPUT_INVALID",
+                model_calls=ctx.model_calls,
+                repair_count=ctx.repair_count,
+            )
         result.review_id = self.audit.run_finished(result)
         if result.outcome == "FALLBACK" and not result.review_id:
             raise ServiceError("PERSISTENCE_FAILED", result.request_id)

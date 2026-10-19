@@ -7,10 +7,16 @@ from pathlib import Path
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from harness.contracts import RunInput, RunResult, ServiceError, SourceUnavailable
+from harness.contracts import (
+    RunInput,
+    RunResult,
+    ServiceError,
+    SourceUnavailable,
+    extractor_thread,
+)
 from harness.events import event
 from harness.runtime import Harness
-from infrastructure.sqlite import SQLiteStore, identifier
+from infrastructure.sqlite import RAW_RETENTION_SECONDS, SQLiteStore, identifier
 from support_extraction.policy import contract
 from support_extraction.safety import sanitize, sensitive_values
 
@@ -43,9 +49,14 @@ class ExtractionService:
         max_turns=20,
         source_reader=None,
         allowed_records=frozenset(),
+        session_ttl_days=7,
     ):
         service = cls()
-        service.store = SQLiteStore(Path(directory) / "audit.sqlite3", clock=clock)
+        service.store = SQLiteStore(
+            Path(directory) / "audit.sqlite3",
+            clock=clock,
+            session_ttl_seconds=session_ttl_days * 86400,
+        )
         path = Path(directory) / "checkpoints.sqlite3"
         path.touch(mode=0o600, exist_ok=True)
         os.chmod(path, 0o600)
@@ -76,7 +87,7 @@ class ExtractionService:
             review = self.store.review(review_id)
         except LookupError as exc:
             raise InputError(str(exc)) from None
-        cutoff = self.store.clock() - 7 * 86400
+        cutoff = self.store.clock() - RAW_RETENTION_SECONDS
         for source in review["sources"]:
             source["raw_status"] = "EXPIRED" if source["created_at"] <= cutoff else "AVAILABLE"
         for attempt in review["attempts"]:
@@ -104,11 +115,11 @@ class ExtractionService:
 
     async def clear(self, session_id):
         try:
-            threads = self.store.clear(session_id)
+            task_ids = self.store.clear(session_id)
         except LookupError as exc:
             raise InputError(str(exc)) from None
-        for thread in threads:
-            await self.checkpointer.adelete_thread(thread)
+        for task_id in task_ids:
+            await self.checkpointer.adelete_thread(extractor_thread(session_id, task_id))
 
     async def submit(self, submission: Submission):
         await self.maintenance()
@@ -152,14 +163,15 @@ class ExtractionService:
                 failure = "SOURCE_POLICY_FAILED"
                 raise ServiceError(failure, request_id, source_saved=False) from None
             finally:
-                event(
-                    "source_read",
-                    request_id=request_id,
-                    reason="ACCESS_GRANTED",
-                    latency_ms=round((time.monotonic() - started) * 1000, 3),
-                    outcome="FAILED" if failure else "RECEIVED",
-                    error_code=failure,
-                )
+                fields = {
+                    "request_id": request_id,
+                    "reason": "ACCESS_GRANTED",
+                    "latency_ms": round((time.monotonic() - started) * 1000, 3),
+                    "outcome": "FAILED" if failure else "RECEIVED",
+                }
+                if failure:
+                    fields["error_code"] = failure
+                event("source_read", **fields)
         try:
             session_id, task_id = self.store.reserve(
                 submission.session_id,
@@ -175,14 +187,8 @@ class ExtractionService:
         source_saved = False
         try:
             if read_error is not None:
-                result = RunResult(
-                    session_id=session_id,
-                    task_id=task_id,
-                    request_id=request_id,
-                    outcome="FALLBACK",
-                    model_calls=0,
-                    repair_count=0,
-                    error_code=read_error,
+                result = RunResult.fallback(
+                    session_id, task_id, request_id, read_error
                 )
                 result.review_id = self.store.run_finished(result)
                 event("run_finished", **result.model_dump(exclude={"data"}))

@@ -37,6 +37,32 @@ class RunResult(BaseModel):
     review_id: str | None = None
     error_code: str | None = None
 
+    @classmethod
+    def fallback(
+        cls,
+        session_id: str,
+        task_id: str,
+        request_id: str,
+        error_code: str,
+        *,
+        model_calls: int = 0,
+        repair_count: int = 0,
+    ) -> "RunResult":
+        return cls(
+            session_id=session_id,
+            task_id=task_id,
+            request_id=request_id,
+            outcome="FALLBACK",
+            model_calls=model_calls,
+            repair_count=repair_count,
+            error_code=error_code,
+        )
+
+
+def extractor_thread(session_id: str, task_id: str) -> str:
+    """Stable checkpoint thread for the single extraction agent."""
+    return f"{session_id}:{task_id}:extractor"
+
 
 class AuditSink(Protocol):
     def run_started(self, run: RunInput) -> None: ...
@@ -62,7 +88,7 @@ class SourceUnavailable(Exception):
     expected read failure.
     """
 
-    def __init__(self, code: str = "SOURCE_UNAVAILABLE"):
+    def __init__(self, code: str):
         super().__init__(code)
         self.code = code
 

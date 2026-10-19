@@ -49,7 +49,26 @@ def test_serve_builds_the_app_with_the_review_page(monkeypatch):
         serve, "create_app", lambda **options: seen.update(options) or object()
     )
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: None)
+    monkeypatch.delenv("HARNESS_SESSION_TTL_DAYS", raising=False)
 
     serve.main()
 
-    assert seen == {"ui": True}
+    assert seen == {"ui": True, "session_ttl_days": 7}
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, 7), ("3", 3)])
+def test_serve_reads_the_configured_session_ttl_days(monkeypatch, configured, expected):
+    seen = {}
+    monkeypatch.setattr(serve, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        serve, "create_app", lambda **options: seen.update(options) or object()
+    )
+    monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: None)
+    if configured is None:
+        monkeypatch.delenv("HARNESS_SESSION_TTL_DAYS", raising=False)
+    else:
+        monkeypatch.setenv("HARNESS_SESSION_TTL_DAYS", configured)
+
+    serve.main()
+
+    assert seen["session_ttl_days"] == expected

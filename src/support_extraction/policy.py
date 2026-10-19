@@ -18,6 +18,9 @@ class Extraction(BaseModel):
     detected_pii: bool
 
 
+SIX_FIELDS = tuple(Extraction.model_fields)
+
+
 def finalize(data: dict, pii_seen: bool, known: tuple[str, ...]) -> dict:
     data = {
         key: sanitize(value, known) if isinstance(value, str) else value

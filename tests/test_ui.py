@@ -5,16 +5,8 @@ from harness.contracts import RunResult, ServiceError
 from infrastructure.model import configured_model
 from infrastructure.records import FixtureSource
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
+from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService
-
-SIX_FIELDS = {
-    "customer_id",
-    "issue_category",
-    "urgency",
-    "summary",
-    "actionable_steps",
-    "detected_pii",
-}
 
 
 async def open_service(tmp_path, responses, **options):
@@ -30,7 +22,7 @@ async def test_direct_extraction_shows_all_six_fields_and_run_metrics(
     try:
         panel = await ui.extract(service, text="重复扣款，已发起退款。")
         assert panel["status"] == "SUCCESS"
-        assert set(panel["fields"]) == SIX_FIELDS
+        assert set(panel["fields"]) == set(SIX_FIELDS)
         assert panel["fields"] == valid_data
         assert panel["model_calls"] == 1
         assert panel["repair_count"] == 0
@@ -98,10 +90,11 @@ async def test_restore_lists_saved_sources_and_historical_results(tmp_path, vali
             second["request_id"],
         ]
         for run in panel["history"]:
-            assert run["notice"] == ui.HISTORICAL_NOTICE.format(
-                request_id=run["request_id"]
+            assert run["notice"] == (
+                f"这是请求 {run['request_id']} 的历史结果，未必反映最新补充。"
             )
         rendered = ui.format_panel(panel)
+        assert "**历史有效结果**" in rendered
         assert ui.HISTORICAL_NOTICE.format(request_id=first["request_id"]) in rendered
         assert "客户 ID CUST-98234，重复扣款。" in rendered
         assert len(model.calls) == 2
@@ -124,6 +117,24 @@ async def test_new_task_does_not_inherit_previous_customer_facts(tmp_path, valid
         assert "CUST-98234" not in model.calls[-1][1].content
         restored = await service.restore(first["session_id"])
         assert [source["text"] for source in restored["sources"]] == ["一般咨询。"]
+    finally:
+        await service.close()
+
+
+async def test_new_task_ignores_a_stale_task_id_from_the_page_state(tmp_path, valid_json):
+    service, model = await open_service(tmp_path, [valid_json, valid_json])
+    try:
+        first = await ui.extract(service, text="客户 ID CUST-98234，重复扣款。")
+        second = await ui.extract(
+            service,
+            text="一般咨询。",
+            session_id=first["session_id"],
+            task_id=first["task_id"],
+            new_task=True,
+        )
+        assert second["status"] == "SUCCESS"
+        assert second["session_id"] == first["session_id"]
+        assert second["task_id"] != first["task_id"]
     finally:
         await service.close()
 

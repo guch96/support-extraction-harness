@@ -11,10 +11,19 @@ from pydantic import PrivateAttr
 class ScriptedModel(BaseChatModel):
     responses: list[Any]
     _calls: list[list[Any]] = PrivateAttr(default_factory=list)
+    _tool_bindings: list[list[Any]] = PrivateAttr(default_factory=list)
 
     @property
     def _llm_type(self):
         return "scripted-test-model"
+
+    def bind_tools(self, tools, **kwargs):
+        self._tool_bindings.append(list(tools))
+        return self
+
+    @property
+    def tool_bindings(self):
+        return self._tool_bindings
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         raise AssertionError("Use the asynchronous model path")
