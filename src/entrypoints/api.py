@@ -111,7 +111,7 @@ def create_app(
         return await request.app.state.service.review(review_id, raw=include_raw)
 
     if ui:
-        from entrypoints.ui import mount_ui
+        from entrypoints.chat import mount_ui
 
         mount_ui(app, lambda: app.state.service)
 

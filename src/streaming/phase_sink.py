@@ -6,8 +6,8 @@ from streaming.events import ChatEvent, Phase
 class PhaseSink:
     """In-memory channel for chat phase events.
 
-    The chat page does not consume it yet; the sink only preserves emit order so a
-    later streaming integration can read events asynchronously.
+    The chat page reads events asynchronously while one extraction run executes;
+    the sink also preserves emit order for assertions.
     """
 
     def __init__(self):
@@ -19,6 +19,10 @@ class PhaseSink:
         self._events.append(chat_event)
         self._pending.put_nowait(chat_event)
         return chat_event
+
+    @property
+    def empty(self) -> bool:
+        return self._pending.empty()
 
     async def next_event(self) -> ChatEvent:
         return await self._pending.get()

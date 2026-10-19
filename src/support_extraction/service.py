@@ -202,6 +202,8 @@ class ExtractionService:
                     session_id, task_id, request_id, read_error
                 )
                 result.review_id = self.store.run_finished(result)
+                if phases is not None:
+                    phases.emit(Phase.FAILED, "未取得合格结果，已转人工审核")
                 event("run_finished", **result.model_dump(exclude={"data"}))
                 return result
             try:
