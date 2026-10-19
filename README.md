@@ -245,7 +245,7 @@ sequenceDiagram
         H->>DB: run_finished = SUCCESS / REPAIRED
         H-->>S: RunResult
         S-->>C: 200 + 六字段结果
-    else 协议或 schema 错误，且调用次数 < 3
+    else 协议或 schema 错误，且调用次数少于 3 次
         M->>DB: 保存原始输出 · 错误签名 · feedback
         M->>L: 调用 2..3：同一 system + 同一来源包 + repair_feedback(repair.v1)
         L-->>M: 原始响应
