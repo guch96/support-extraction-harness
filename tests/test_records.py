@@ -2,6 +2,7 @@ import pytest
 from conftest import ScriptedModel
 
 from harness.contracts import ServiceError, SourceUnavailable
+from infrastructure.records import FixtureSource
 from support_extraction.service import ExtractionService, InputError, Submission
 
 
@@ -48,6 +49,16 @@ async def test_unapproved_record_is_denied_before_reading_or_calling_model(tmp_p
         assert source.reads == [] and model.calls == []
     finally:
         await app.close()
+
+
+async def test_record_adapter_reports_expected_unavailability_explicitly(tmp_path):
+    fixture = tmp_path / "records.json"
+    fixture.write_text('{"records": {"TX-EMPTY": "  "}}', encoding="utf-8")
+    source = FixtureSource(fixture, {"TX-EMPTY", "TX-MISSING"})
+    with pytest.raises(SourceUnavailable, match="INVALID_RECORD"):
+        await source.read("TX-EMPTY")
+    with pytest.raises(SourceUnavailable, match="RECORD_NOT_FOUND"):
+        await source.read("TX-MISSING")
 
 
 async def test_expected_source_failure_saves_pending_review_without_model_call(
