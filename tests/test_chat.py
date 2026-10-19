@@ -1,5 +1,6 @@
 import re
 
+import pytest
 from conftest import ScriptedModel
 
 from entrypoints import chat
@@ -8,7 +9,7 @@ from infrastructure.records import FixtureSource
 from runtime.contracts import RunResult, ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
 from support_extraction.policy import SIX_FIELDS
-from support_extraction.service import ExtractionService
+from support_extraction.service import ExtractionService, Submission
 
 
 async def open_service(tmp_path, responses, **options):
@@ -55,6 +56,13 @@ async def test_first_text_creates_a_session_and_renders_the_validated_card(
         assert user_texts(state["messages"]) == ["重复扣款，已发起退款。"]
         card = assistant_texts(state["messages"])[-1]
         assert "SUCCESS" in card
+        answer = (
+            "这份对话的核心问题是：重复扣款，退款已发起，预计 3-5 个工作日到账。\n\n"
+            "归类为账单问题，紧急程度中。客户标识：CUST-98234。"
+            "后续步骤：1. 等待已发起的退款到账。\n\n"
+            "依据已校验字段整理。"
+        )
+        assert card.startswith(f"### 🟢 SUCCESS\n{answer}\n")
         for label in chat.FIELD_LABELS.values():
             assert label in card
         assert set(chat.FIELD_LABELS) == set(SIX_FIELDS)
@@ -62,6 +70,14 @@ async def test_first_text_creates_a_session_and_renders_the_validated_card(
         assert "模型调用次数：1" in card and "修复次数：0" in card
         assert "<details>" in card and "结构化结果（已校验）" in card
         assert "```json" in card
+        details_start = card.index("<details>")
+        assert (
+            card.index(answer)
+            < details_start
+            < card.index("| 字段 |")
+            < card.index("```json")
+            < card.index("</details>")
+        )
 
         restored = await service.restore(state["session_id"])
         request_id = restored["runs"][0]["id"]
@@ -316,6 +332,11 @@ async def test_fallback_shows_the_review_action_bar_without_leaking_raw_output(
         card = assistant_texts(state["messages"])[-1]
         assert "FALLBACK" in card
         assert state["fallback_review_id"] in card
+        assert "这次没有取得合格结果，已保存为待人工审核，编号" in card
+        assert "原因：模型输出未通过检查。" in card
+        assert "| 字段 |" not in card
+        assert "结构化结果（已校验）" not in card
+        assert "```json" not in card
         assert "模型调用次数：3" in card and "修复次数：2" in card
 
         everything = "\n".join(assistant_texts(state["messages"]))
@@ -408,6 +429,7 @@ async def test_missing_model_configuration_renders_an_explicit_error_card(
         card = assistant_texts(states[-1]["messages"])[-1]
         assert "ERROR" in card
         assert "MODEL_NOT_CONFIGURED" in card
+        assert "这次请求没有完成：模型未配置（`MODEL_NOT_CONFIGURED`）。" in card
         assert "请求编号：`" in card
         assert states[-1]["fallback_review_id"] is None
     finally:
@@ -421,6 +443,7 @@ async def test_blank_text_renders_an_input_error_card(tmp_path, valid_json):
         card = assistant_texts(states[-1]["messages"])[-1]
         assert "ERROR" in card
         assert "INVALID_INPUT" in card
+        assert "这次请求没有完成：输入不合法（`INVALID_INPUT`）。" in card
         assert "请提供对话文本" in card
         assert "请求编号：`" in card
         assert model.calls == []
@@ -443,7 +466,9 @@ async def test_record_send_repairs_and_the_next_text_supplements_it(tmp_path, va
         card = assistant_texts(first["messages"])[-1]
         assert "REPAIRED" in card
         assert "修复次数：1" in card
-        assert chat.REPAIRED_NOTICE.format(repair_count=1) in card
+        assert "经过 1 次自动纠正后通过检查。" in card
+        assert "修复轨迹：" in card and "raw_schema" in card
+        assert "依据已校验字段整理。" in card
         assert "CUST-98234" in card
 
         supplement = (
@@ -600,6 +625,99 @@ async def test_each_send_invokes_submit_exactly_once(tmp_path, valid_json):
         assert len(model.calls) == 2
     finally:
         await service.close()
+
+
+@pytest.mark.parametrize(
+    ("error_code", "reason"),
+    [
+        ("MODEL_TIMEOUT", "模型调用超时"),
+        ("MODEL_CALL_FAILED", "模型调用失败"),
+        ("OUTPUT_INVALID", "模型输出未通过检查"),
+        ("BUDGET_EXHAUSTED", "修复次数用尽"),
+        ("RUN_TIMEOUT", "整次运行超时"),
+        ("RECORD_NOT_FOUND", "RECORD_NOT_FOUND"),
+    ],
+)
+def test_fallback_answer_maps_reasons_and_keeps_unknown_codes(error_code, reason):
+    panel = chat.result_panel(
+        RunResult(
+            session_id="session-1",
+            task_id="task-1",
+            request_id="request-1",
+            outcome="FALLBACK",
+            model_calls=3,
+            repair_count=2,
+            review_id="review-1",
+            error_code=error_code,
+        )
+    )
+    assert chat.natural_answer(panel) == (
+        "这次没有取得合格结果，已保存为待人工审核，编号 `review-1`。"
+        f"原因：{reason}。"
+    )
+
+
+def test_natural_answer_states_missing_facts_without_guessing(valid_data):
+    fields = {
+        **valid_data,
+        "summary": "",
+        "customer_id": None,
+        "actionable_steps": [],
+    }
+    panel = chat.result_panel(
+        RunResult(
+            session_id="session-1",
+            task_id="task-1",
+            request_id="request-1",
+            outcome="SUCCESS",
+            data=fields,
+            model_calls=1,
+            repair_count=0,
+            diagnostics={"pii": {"detected": False}},
+        )
+    )
+    answer = chat.natural_answer(panel)
+    assert answer == (
+        "这份对话的核心问题是：（无摘要）\n\n"
+        "归类为账单问题，紧急程度中。未提供客户标识。"
+        "来源中没有明确的后续步骤。\n\n"
+        "依据已校验字段整理。"
+    )
+    assert "CUST-98234" not in answer
+    assert "材料中发现敏感信息" not in answer
+
+
+def test_natural_answer_adds_the_pii_sentence_only_when_detected(valid_data):
+    panel = chat.result_panel(
+        RunResult(
+            session_id="session-1",
+            task_id="task-1",
+            request_id="request-1",
+            outcome="SUCCESS",
+            data=valid_data,
+            model_calls=1,
+            repair_count=0,
+            diagnostics={"pii": {"detected": False}},
+        )
+    )
+    assert "材料中发现敏感信息" not in chat.natural_answer(panel)
+    panel["diagnostics"] = {"pii": {"detected": True}}
+    assert "材料中发现敏感信息，已脱敏后处理。" in chat.natural_answer(panel)
+
+
+async def test_history_replay_uses_the_same_natural_answer(tmp_path, valid_json):
+    service, _ = await open_service(tmp_path, [valid_json])
+    try:
+        result = await service.submit(Submission(text="重复扣款，已发起退款。"))
+        live = chat.format_result_card(chat.result_panel(result))
+        state = await chat.restore(service, result.session_id)
+    finally:
+        await service.close()
+    replayed = assistant_texts(state["messages"])[-1]
+    answer = chat.natural_answer(chat.result_panel(result))
+    assert live.startswith(f"### 🟢 SUCCESS\n{answer}")
+    assert answer in replayed
+    assert chat.HISTORICAL_NOTICE.format(request_id=result.request_id) in replayed
 
 
 def test_chat_module_imports_gradio_lazily():

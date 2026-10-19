@@ -71,6 +71,57 @@ PII_KIND_LABELS = {
 PLACEHOLDER_NOTICE = "⏳ 正在处理…"
 SOURCE_PLACEHOLDER = "（记录读取）"
 EMPTY_MESSAGE = "（空消息）"
+ANSWER_REPAIRED_PREFIX = "经过 {repair_count} 次自动纠正后通过检查。"
+ANSWER_SUMMARY = "这份对话的核心问题是：{summary}"
+ANSWER_CLASSIFICATION = "归类为{category}，紧急程度{urgency}。{customer}{steps}{pii}"
+ANSWER_BASIS = "依据已校验字段整理。"
+ANSWER_CUSTOMER = "客户标识：{customer_id}。"
+ANSWER_CUSTOMER_MISSING = "未提供客户标识。"
+ANSWER_STEPS = "后续步骤：{steps}。"
+ANSWER_STEPS_MISSING = "来源中没有明确的后续步骤。"
+ANSWER_PII = "材料中发现敏感信息，已脱敏后处理。"
+ANSWER_FALLBACK = (
+    "这次没有取得合格结果，已保存为待人工审核，编号 `{review_id}`。原因：{reason}。"
+)
+ANSWER_FALLBACK_UNSAVED = (
+    "这次没有取得合格结果，审核记录也未能保存。原因：{reason}。"
+    "请求编号 `{request_id}`。"
+)
+ANSWER_ERROR = "这次请求没有完成：{reason}（`{error_code}`）。请求编号 `{request_id}`。"
+CATEGORY_LABELS = {
+    "BILLING": "账单问题",
+    "TECHNICAL": "技术问题",
+    "ACCOUNT": "账户问题",
+    "OTHER": "其他问题",
+}
+URGENCY_LABELS = {
+    "LOW": "低",
+    "MEDIUM": "中",
+    "HIGH": "高",
+    "CRITICAL": "紧急",
+}
+FALLBACK_REASONS = {
+    "MODEL_TIMEOUT": "模型调用超时",
+    "MODEL_CALL_FAILED": "模型调用失败",
+    "OUTPUT_INVALID": "模型输出未通过检查",
+    "BUDGET_EXHAUSTED": "修复次数用尽",
+    "RUN_TIMEOUT": "整次运行超时",
+}
+ERROR_REASONS = {
+    "INVALID_INPUT": "输入不合法",
+    "SESSION_EXPIRED": "会话已过期或已清空",
+    "SESSION_NOT_FOUND": "未找到该会话",
+    "TASK_NOT_FOUND": "未找到该任务",
+    "TASK_BUSY": "该任务正在处理中",
+    "SOURCE_TOO_LARGE": "来源材料超过上限",
+    "ACCESS_DENIED": "该记录不在允许读取的范围内",
+    "REVIEW_NOT_FOUND": "未找到该审核项",
+    "MODEL_NOT_CONFIGURED": "模型未配置",
+    "MODEL_CALL_FAILED": "模型调用失败",
+    "PERSISTENCE_FAILED": "保存失败",
+    "REVIEW_SAVE_FAILED": "审核记录保存失败",
+    "INTERNAL_ERROR": "内部处理失败",
+}
 
 INPUT_NOTICES = {
     "INVALID_INPUT": "请提供对话文本或选择一条记录，并检查提交参数。",
@@ -707,35 +758,97 @@ def _processing_block(diagnostics: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _natural_customer(fields: dict[str, Any]) -> str:
+    customer_id = fields.get("customer_id")
+    if customer_id:
+        return ANSWER_CUSTOMER.format(customer_id=customer_id)
+    return ANSWER_CUSTOMER_MISSING
+
+
+def _natural_steps(fields: dict[str, Any]) -> str:
+    steps = [str(step) for step in fields.get("actionable_steps") or [] if str(step)]
+    if not steps:
+        return ANSWER_STEPS_MISSING
+    numbered = "；".join(f"{index}. {step}" for index, step in enumerate(steps, 1))
+    return ANSWER_STEPS.format(steps=numbered)
+
+
+def natural_answer(panel: dict[str, Any]) -> str:
+    """Render one assistant bubble from validated fields and runtime facts only."""
+    fields = panel.get("fields") or {}
+    status = panel.get("status")
+    if status in ("SUCCESS", "REPAIRED"):
+        diagnostics = panel.get("diagnostics") or {}
+        paragraphs = []
+        if status == "REPAIRED":
+            paragraphs.append(
+                ANSWER_REPAIRED_PREFIX.format(
+                    repair_count=panel.get("repair_count") or 0
+                )
+            )
+        paragraphs.append(
+            ANSWER_SUMMARY.format(summary=fields.get("summary") or "（无摘要）")
+        )
+        pii = ANSWER_PII if (diagnostics.get("pii") or {}).get("detected") else ""
+        paragraphs.append(
+            ANSWER_CLASSIFICATION.format(
+                category=CATEGORY_LABELS.get(fields.get("issue_category"), "未提供"),
+                urgency=URGENCY_LABELS.get(fields.get("urgency"), "未提供"),
+                customer=_natural_customer(fields),
+                steps=_natural_steps(fields),
+                pii=pii,
+            )
+        )
+        paragraphs.append(ANSWER_BASIS)
+        return "\n\n".join(paragraphs)
+    error_code = panel.get("error_code")
+    if status == "FALLBACK":
+        reason = FALLBACK_REASONS.get(error_code, error_code or "未通过检查")
+        if panel.get("review_id"):
+            return ANSWER_FALLBACK.format(
+                review_id=panel["review_id"], reason=reason
+            )
+        return ANSWER_FALLBACK_UNSAVED.format(
+            reason=reason, request_id=panel.get("request_id") or "（未知）"
+        )
+    reason = ERROR_REASONS.get(error_code, "服务处理失败")
+    return ANSWER_ERROR.format(
+        reason=reason,
+        error_code=error_code or "（未知）",
+        request_id=panel.get("request_id") or "（未知）",
+    )
+
+
 def format_result_card(panel: dict[str, Any], *, historical: bool = False) -> str:
     badge = {
         "SUCCESS": "🟢 SUCCESS",
         "REPAIRED": "🟠 REPAIRED",
         "FALLBACK": "🟡 FALLBACK",
     }.get(panel["status"], f"🔴 {panel['status']}")
-    lines = [f"### {badge}"]
-    if panel.get("notice"):
-        lines.append(panel["notice"])
+    lines = [f"### {badge}", natural_answer(panel)]
     if historical and panel.get("request_id"):
-        lines.append(HISTORICAL_NOTICE.format(request_id=panel["request_id"]))
+        lines.extend(
+            ["", HISTORICAL_NOTICE.format(request_id=panel["request_id"])]
+        )
     diagnostics = panel.get("diagnostics") or {}
     trace = _repair_trace(diagnostics)
     if trace:
-        lines.append(trace)
+        lines.extend(["", trace])
     lines.append("")
     lines.append(f"模型调用次数：{panel['model_calls']} ｜ 修复次数：{panel['repair_count']}")
     if panel.get("request_id"):
         lines.append(f"请求编号：`{panel['request_id']}`")
     if panel.get("error_code"):
         lines.append(f"错误代码：`{panel['error_code']}`")
-    if panel.get("fields"):
-        lines.extend(["", _fields_table(panel["fields"])])
+    if panel["status"] in ("SUCCESS", "REPAIRED") and panel.get("fields"):
         payload = json.dumps(panel["fields"], ensure_ascii=False, indent=2)
         lines.extend(
             [
                 "",
                 "<details>",
                 "<summary>结构化结果（已校验）</summary>",
+                "",
+                _fields_table(panel["fields"]),
                 "",
                 "```json",
                 payload,
@@ -744,14 +857,12 @@ def format_result_card(panel: dict[str, Any], *, historical: bool = False) -> st
                 "</details>",
             ]
         )
-    else:
-        lines.extend(["", "本次没有可展示的已校验字段。"])
     lines.extend(_processing_block(diagnostics))
     return "\n".join(lines)
 
 
 def format_error_card(panel: dict[str, Any]) -> str:
-    lines = ["### 🔴 ERROR"]
+    lines = ["### 🔴 ERROR", natural_answer(panel)]
     if panel.get("notice"):
         lines.append(panel["notice"])
     if panel.get("error_code"):
