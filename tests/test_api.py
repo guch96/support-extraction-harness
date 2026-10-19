@@ -54,6 +54,19 @@ def test_http_rejections_do_not_expose_request_values_or_call_model(tmp_path, va
         assert model.calls == []
 
 
+def test_ui_is_mounted_beside_the_api_routes(tmp_path, valid_json):
+    model = ScriptedModel(responses=[valid_json])
+    app = create_app(directory=tmp_path, model_factory=lambda: model, ui=True)
+    with TestClient(app) as client:
+        page = client.get("/ui/")
+        assert page.status_code == 200
+        assert "text/html" in page.headers["content-type"]
+        response = client.post("/extractions", json={"text": "重复扣款，已发起退款。"})
+        assert response.status_code == 200
+        assert response.json()["outcome"] == "SUCCESS"
+        assert len(model.calls) == 1
+
+
 def test_missing_model_configuration_returns_explicit_service_error(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)

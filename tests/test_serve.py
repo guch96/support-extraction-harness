@@ -29,6 +29,7 @@ def test_configure_logging_emits_one_json_object_per_line():
 def test_serve_binds_loopback_with_configured_port(monkeypatch, configured, expected):
     seen = {}
     monkeypatch.setattr(serve, "configure_logging", lambda: None)
+    monkeypatch.setattr(serve, "create_app", lambda **options: object())
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: seen.update(options))
     if configured is None:
         monkeypatch.delenv("HARNESS_PORT", raising=False)
@@ -39,3 +40,16 @@ def test_serve_binds_loopback_with_configured_port(monkeypatch, configured, expe
 
     assert seen["host"] == "127.0.0.1"
     assert seen["port"] == expected
+
+
+def test_serve_builds_the_app_with_the_review_page(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(serve, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        serve, "create_app", lambda **options: seen.update(options) or object()
+    )
+    monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: None)
+
+    serve.main()
+
+    assert seen == {"ui": True}
