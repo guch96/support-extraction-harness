@@ -50,6 +50,20 @@ EXPIRED_MARKER = "（原文已过期）"
 HISTORICAL_NOTICE = "这是请求 {request_id} 的历史结果，未必反映最新补充。"
 UNKNOWN_NOTICE = "暂无法确认补充是否已保存，请按请求编号查询。"
 FALLBACK_ACTION_NOTICE = "本次 FALLBACK · 审核编号 `{review_id}`"
+REPAIR_TRACE_PREFIX = "修复轨迹："
+PROCESSING_SUMMARY = "本次处理"
+PROCESSING_INPUT_TEXT = "直接文本"
+PROCESSING_INPUT_RECORD = "记录 {record_id}"
+PROCESSING_PII_NONE = "未发现"
+PROCESSING_PII_FOUND = "发现 {kind_count} 类并脱敏 {redactions} 处：{labels}"
+PROCESSING_TAGS = "标签中和 {count} 处"
+PROCESSING_BUDGET = "预算：调用 {model_calls}/{max_calls}，修复 {repair_count}/{max_repairs}"
+PII_KIND_LABELS = {
+    "card": "卡号",
+    "national_id": "身份证号",
+    "nric": "证件号",
+    "password": "密码",
+}
 PLACEHOLDER_NOTICE = "⏳ 正在处理…"
 SOURCE_PLACEHOLDER = "（记录读取）"
 EMPTY_MESSAGE = "（空消息）"
@@ -88,6 +102,7 @@ def _empty_panel() -> dict[str, Any]:
         "repair_count": None,
         "review_id": None,
         "notice": "",
+        "diagnostics": {},
     }
 
 
@@ -113,6 +128,7 @@ def result_panel(result: RunResult) -> dict[str, Any]:
         "repair_count": result.repair_count,
         "review_id": result.review_id,
         "notice": notice,
+        "diagnostics": dict(result.diagnostics or {}),
     }
 
 
@@ -382,6 +398,7 @@ def _history_card(task: dict[str, Any], run: dict[str, Any], session_id: str) ->
                 "session_id": session_id,
                 "task_id": task["task_id"],
                 "notice": HISTORICAL_NOTICE.format(request_id=run["request_id"]),
+                "diagnostics": run.get("diagnostics") or {},
             }
         )
         return format_error_card(panel)
@@ -395,6 +412,7 @@ def _history_card(task: dict[str, Any], run: dict[str, Any], session_id: str) ->
         repair_count=run["repair_count"],
         review_id=run["review_id"],
         error_code=run["error_code"],
+        diagnostics=run.get("diagnostics") or {},
     )
     return format_result_card(result_panel(result), historical=True)
 
@@ -581,6 +599,75 @@ def _fields_table(fields: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _repair_trace(diagnostics: dict[str, Any]) -> str | None:
+    repairs = diagnostics.get("repairs") or []
+    if not repairs:
+        return None
+    parts = []
+    for repair in repairs:
+        signature = " · ".join(str(item) for item in repair.get("signature") or [])
+        part = f"第 {repair.get('attempt')} 次 {repair.get('stage')}"
+        if signature:
+            part += f" · {signature}"
+        parts.append(part)
+    return REPAIR_TRACE_PREFIX + "；".join(parts)
+
+
+def _pii_line(pii: dict[str, Any]) -> str:
+    if not pii.get("detected"):
+        return PROCESSING_PII_NONE
+    labels = [PII_KIND_LABELS.get(kind, str(kind)) for kind in pii.get("kinds") or []]
+    labels = labels or ["敏感信息"]
+    return PROCESSING_PII_FOUND.format(
+        kind_count=len(labels),
+        redactions=pii.get("redactions") or 0,
+        labels="、".join(labels),
+    )
+
+
+def _model_error_text(errors: list[dict[str, Any]]) -> str:
+    parts = []
+    for error in errors:
+        code = f"`{error.get('code')}`"
+        attempt = error.get("attempt")
+        parts.append(f"{code}（第 {attempt} 次）" if attempt else code)
+    return "；".join(parts)
+
+
+def _processing_block(diagnostics: dict[str, Any]) -> list[str]:
+    if not diagnostics:
+        return []
+    lines = ["", "<details>", f"<summary>{PROCESSING_SUMMARY}</summary>", ""]
+    input_mode = diagnostics.get("input_mode")
+    if input_mode == "record":
+        record_id = diagnostics.get("record_id") or "（未知）"
+        lines.append("- 输入方式：" + PROCESSING_INPUT_RECORD.format(record_id=record_id))
+    elif input_mode:
+        lines.append("- 输入方式：" + PROCESSING_INPUT_TEXT)
+    if diagnostics.get("source_revision") is not None:
+        lines.append(f"- 来源版本：{diagnostics['source_revision']}")
+    lines.append("- PII：" + _pii_line(diagnostics.get("pii") or {}))
+    tags = diagnostics.get("tags_neutralized") or 0
+    lines.append("- " + PROCESSING_TAGS.format(count=tags))
+    budget = diagnostics.get("budget") or {}
+    max_calls = budget.get("max_calls")
+    if max_calls is not None:
+        lines.append(
+            "- "
+            + PROCESSING_BUDGET.format(
+                model_calls=budget.get("model_calls") or 0,
+                max_calls=max_calls,
+                repair_count=budget.get("repair_count") or 0,
+                max_repairs=max(max_calls - 1, 0),
+            )
+        )
+    errors = diagnostics.get("model_errors") or []
+    if errors:
+        lines.append("- 模型错误码：" + _model_error_text(errors))
+    lines.extend(["", "</details>"])
+    return lines
+
+
 def format_result_card(panel: dict[str, Any], *, historical: bool = False) -> str:
     badge = {
         "SUCCESS": "🟢 SUCCESS",
@@ -592,6 +679,10 @@ def format_result_card(panel: dict[str, Any], *, historical: bool = False) -> st
         lines.append(panel["notice"])
     if historical and panel.get("request_id"):
         lines.append(HISTORICAL_NOTICE.format(request_id=panel["request_id"]))
+    diagnostics = panel.get("diagnostics") or {}
+    trace = _repair_trace(diagnostics)
+    if trace:
+        lines.append(trace)
     lines.append("")
     lines.append(f"模型调用次数：{panel['model_calls']} ｜ 修复次数：{panel['repair_count']}")
     if panel.get("request_id"):
@@ -616,6 +707,7 @@ def format_result_card(panel: dict[str, Any], *, historical: bool = False) -> st
         )
     else:
         lines.extend(["", "本次没有可展示的已校验字段。"])
+    lines.extend(_processing_block(diagnostics))
     return "\n".join(lines)
 
 
@@ -627,6 +719,7 @@ def format_error_card(panel: dict[str, Any]) -> str:
         lines.append(f"错误代码：`{panel['error_code']}`")
     if panel.get("request_id"):
         lines.append(f"请求编号：`{panel['request_id']}`")
+    lines.extend(_processing_block(panel.get("diagnostics") or {}))
     return "\n".join(lines)
 
 

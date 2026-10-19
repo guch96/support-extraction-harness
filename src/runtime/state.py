@@ -31,6 +31,9 @@ class RunContext:
     data: dict | None = None
     outcome: str | None = None
     error_code: str | None = None
+    diagnostics: dict = field(default_factory=dict)
+    repairs: list[dict] = field(default_factory=list)
+    model_errors: list[dict] = field(default_factory=list)
 
     def sanitize(self, text: str) -> str:
         return self.contract.sanitize(text, self.run.secret_values)

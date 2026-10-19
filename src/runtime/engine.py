@@ -54,7 +54,7 @@ class Harness:
             checkpointer=checkpointer,
         )
 
-    async def run(self, run: RunInput) -> RunResult:
+    async def run(self, run: RunInput, diagnostics: dict | None = None) -> RunResult:
         source_message = build_source_message(run, self.contract)
         ctx = RunContext(
             run,
@@ -63,6 +63,7 @@ class Harness:
             time.monotonic() + self.run_timeout,
             self.call_timeout,
             source_message,
+            diagnostics=dict(diagnostics or {}),
         )
         try:
             self.audit.run_started(run)
@@ -104,7 +105,25 @@ class Harness:
                 raise
             raise ServiceError("INTERNAL_ERROR", run.request_id) from None
 
+    def _diagnostics(self, ctx) -> dict:
+        return {
+            "input_mode": ctx.diagnostics.get("input_mode"),
+            "record_id": ctx.diagnostics.get("record_id"),
+            "source_revision": ctx.run.source_revision,
+            "pii": ctx.diagnostics.get("pii")
+            or {"detected": False, "kinds": [], "redactions": 0},
+            "tags_neutralized": ctx.diagnostics.get("tags_neutralized", 0),
+            "repairs": list(ctx.repairs),
+            "model_errors": list(ctx.model_errors),
+            "budget": {
+                "max_calls": ctx.contract.max_model_calls,
+                "model_calls": ctx.model_calls,
+                "repair_count": ctx.repair_count,
+            },
+        }
+
     def _finish(self, ctx):
+        diagnostics = self._diagnostics(ctx)
         if ctx.outcome:
             result = RunResult(
                 session_id=ctx.run.session_id,
@@ -114,6 +133,7 @@ class Harness:
                 data=ctx.data,
                 model_calls=ctx.model_calls,
                 repair_count=ctx.repair_count,
+                diagnostics=diagnostics,
             )
         else:
             result = RunResult.fallback(
@@ -123,6 +143,7 @@ class Harness:
                 ctx.error_code or "OUTPUT_INVALID",
                 model_calls=ctx.model_calls,
                 repair_count=ctx.repair_count,
+                diagnostics=diagnostics,
             )
         result.review_id = self.audit.run_finished(result)
         if result.outcome == "FALLBACK" and not result.review_id:
@@ -133,7 +154,7 @@ class Harness:
             self.phases.emit(Phase.SUCCEEDED, "提取完成")
         event(
             "run_finished",
-            **result.model_dump(exclude={"data"}),
+            **result.model_dump(exclude={"data", "diagnostics"}),
             source_revision=ctx.run.source_revision,
         )
         return result

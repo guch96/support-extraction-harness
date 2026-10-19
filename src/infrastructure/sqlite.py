@@ -44,13 +44,17 @@ class SQLiteStore:
                 source_revision INTEGER DEFAULT 0,
                 source_saved INTEGER DEFAULT 0, status TEXT, created_at REAL, data TEXT,
                 error_code TEXT, model_calls INTEGER DEFAULT 0, repair_count INTEGER DEFAULT 0,
-                review_id TEXT UNIQUE
+                review_id TEXT UNIQUE, diagnostics TEXT
             );
             CREATE TABLE IF NOT EXISTS attempts (
                 request_id TEXT, attempt INTEGER, started_at REAL, raw TEXT, latency_ms REAL,
                 error_code TEXT, feedback TEXT, PRIMARY KEY(request_id, attempt)
             );
         """)
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(runs)")}
+        if "diagnostics" not in columns:
+            with self.transaction() as db:
+                db.execute("ALTER TABLE runs ADD COLUMN diagnostics TEXT")
 
     @contextmanager
     def transaction(self):
@@ -228,6 +232,9 @@ class SQLiteStore:
                         "source_revision": run["source_revision"],
                         "created_at": run["created_at"],
                         "review_id": run["review_id"],
+                        "diagnostics": (
+                            json.loads(run["diagnostics"]) if run["diagnostics"] else {}
+                        ),
                     }
                     for run in self.conn.execute(
                         "SELECT * FROM runs WHERE task_id=? ORDER BY created_at, rowid",
@@ -338,12 +345,14 @@ class SQLiteStore:
         review_id = identifier() if result.outcome == "FALLBACK" else None
         with self.transaction() as db:
             db.execute(
-                "UPDATE runs SET status=?,data=?,error_code=?,review_id=? WHERE id=?",
+                "UPDATE runs SET status=?,data=?,error_code=?,review_id=?,diagnostics=? "
+                "WHERE id=?",
                 (
                     result.outcome,
                     json.dumps(result.data, ensure_ascii=False),
                     result.error_code,
                     review_id,
+                    json.dumps(result.diagnostics, ensure_ascii=False),
                     result.request_id,
                 ),
             )
@@ -364,6 +373,9 @@ class SQLiteStore:
             raise LookupError("REVIEW_NOT_FOUND")
         review = dict(row)
         review["status"] = "PENDING"
+        review["diagnostics"] = (
+            json.loads(review["diagnostics"]) if review["diagnostics"] else {}
+        )
         review["sources"] = self.sources(row["task_id"], row["source_revision"])
         review["attempts"] = [
             dict(item)

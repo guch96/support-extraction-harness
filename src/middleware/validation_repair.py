@@ -44,6 +44,13 @@ class ValidationRepairMiddleware(AgentMiddleware):
             "errors": verdict.errors,
             "previous_output": ctx.sanitize(previous),
         }
+        ctx.repairs.append(
+            {
+                "attempt": ctx.model_calls,
+                "stage": verdict.stage,
+                "signature": list(ctx.feedback["error_signature"]),
+            }
+        )
         ctx.audit.validation_failed(ctx.run.request_id, ctx.model_calls, ctx.feedback)
         event(
             "validation_failed",
