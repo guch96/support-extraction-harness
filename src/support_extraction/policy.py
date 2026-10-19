@@ -33,4 +33,12 @@ def contract() -> OutputContract:
     system = template.replace(
         "{{extraction_json_schema}}", json.dumps(Extraction.model_json_schema(), ensure_ascii=False)
     )
-    return OutputContract(Extraction, system, sanitize, finalize)
+    repair_prompt = Path(__file__).with_name("repair.txt").read_text().strip()
+    return OutputContract(
+        schema=Extraction,
+        system_prompt=system,
+        sanitize=sanitize,
+        finalize=finalize,
+        repair_prompt=repair_prompt,
+        max_model_calls=3,
+    )

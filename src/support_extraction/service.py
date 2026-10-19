@@ -8,7 +8,8 @@ import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from harness.contracts import RunInput, RunResult, ServiceError, SourceUnavailable
-from harness.runtime import Harness, event
+from harness.events import event
+from harness.runtime import Harness
 from infrastructure.sqlite import SQLiteStore, identifier
 from support_extraction.policy import contract
 from support_extraction.safety import sanitize, sensitive_values

@@ -11,6 +11,8 @@ class OutputContract:
     system_prompt: str
     sanitize: Callable[[str, tuple[str, ...]], str]
     finalize: Callable[[dict[str, Any], bool, tuple[str, ...]], dict[str, Any]]
+    repair_prompt: str
+    max_model_calls: int = 3
 
 
 @dataclass(frozen=True)
