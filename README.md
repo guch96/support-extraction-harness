@@ -9,7 +9,7 @@
 - [领域术语表](GLOSSARY.md)
 - [ADR 目录](docs/adr/)
 
-> **证据边界（请先读）**：142 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
+> **证据边界（请先读）**：147 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
 
 ## 演示（面试官视角）
 
@@ -57,13 +57,30 @@ uv run python -m entrypoints.serve
 
 **第 5 步：FALLBACK 与人工审核**
 
-1. 停掉服务，把 `OPENAI_API_KEY` 临时改成一个无效值（保留 `OPENAI_MODEL`），重启服务。
-2. 在自由文本框输入“支付账单时应用崩溃，账户明天会被锁定。”并发送。
-3. 结果卡是 🟡 FALLBACK，显示审核编号；点“查看审核”会切到人工审核 tab 并回填编号。
+1. 在聊天页输入区下方点“生成审核演示数据”。按钮旁的说明是“仅演示：本地失败模型，不调用真实模型、不消耗额度”。
+2. 页面追加一条助手气泡“【演示】已生成一条待人工审核记录。”，随后是 🟡 FALLBACK 结果卡，显示模型调用 3 次、修复 2 次和审核编号。
+3. 点行动条“查看审核”，页面会切到人工审核 tab 并回填编号。
 4. 在“人工审核”tab 点“刷新审核列表”，再点“查看审核详情”。默认只显示脱敏来源与处理记录；勾选“显式展示受控原文”后才显示原文。
-5. 演示结束，恢复原来的 `OPENAI_API_KEY` 并重启服务。
+5. 演示项来自本地失败模型，不访问网络、不消耗模型额度，也不影响正常提取；真实提取仍然只使用环境变量配置的模型。
 
-这里用“无效 key”是为了得到可审核的 FALLBACK；如果直接删掉 key 或模型名，会得到 500 `MODEL_NOT_CONFIGURED`，不会产生审核项。页面不会把模型错误说成“注入被拦截”，也不会用模型原文填充结果卡。
+这条入口只用于演示审核链路；如果直接删掉 key 或模型名，正常提取会得到 500 `MODEL_NOT_CONFIGURED`，不会产生审核项。页面不会把模型错误说成“注入被拦截”，也不会用模型原文填充结果卡。
+
+### 如何演示人工审核
+
+这个入口用于现场演示人工审核链路，不依赖真实模型，也不会产生供应商调用。
+
+1. **生成**：在聊天页输入区下方点“生成审核演示数据”。按钮下的说明固定为“仅演示：本地失败模型，不调用真实模型、不消耗额度”。
+2. **看结果卡**：页面先出现一条助手气泡“【演示】已生成一条待人工审核记录。”，随后是 🟡 FALLBACK 结果卡。卡片显示模型调用 3 次、修复 2 次，并给出审核编号；主区的“修复轨迹”列出 3 次 `raw_schema` 失败及字段错误签名。
+3. **进审核 tab**：点行动条“查看审核”，页面切到“人工审核”tab 并回填审核编号；也可以手动粘贴编号。
+4. **刷新与详情**：点“刷新审核列表”，列表出现刚生成的 PENDING 项（审核编号、请求编号、状态、调用/修复次数）；在“审核编号”框确认编号后点“查看审核详情”。
+5. **看原文**：默认只显示保留的脱敏来源与处理记录；勾选“显式展示受控原文”后才显示来源原文与每次 attempt 的原始输出。
+6. **说明 3 次 attempt**：处理记录会列出第 1、2、3 次 attempt，三次都因同一条非法输出失败，第三次后进入 FALLBACK。每次 attempt 的错误签名与耗时可在 `GET /reviews/{review_id}` 的 `feedback.error_signature` 与 `latency_ms` 中查看。
+
+演示模型的边界：
+
+- 失败模型在本地进程内运行（`src/support_extraction/demo.py`），不访问网络、不读取环境变量、不消耗模型额度。
+- 它只被“生成审核演示数据”按钮使用；正常提交仍只使用 `OPENAI_*` 配置的真实模型，缺少配置时明确返回 `MODEL_NOT_CONFIGURED`。
+- 演示会正常写入会话、来源、attempt 与审核项；七天原文保留期与普通审核项相同。
 
 ### 为什么这不是聊天
 
@@ -91,7 +108,7 @@ uv run python -m entrypoints.serve
 | 提示词注入缓解 | 来源先检测 PII、脱敏、标签中和，再用随机边界与 JSON 转义包装；模型无业务工具，记录读取由代码白名单控制 | `tests/test_benchmark_records.py`、`tests/test_records.py` |
 | 敏感信息保护 | 原文与脱敏来源分开保存；日志、错误、默认页面和修复材料只含脱敏内容 | `tests/test_events.py`、`tests/test_chat.py` |
 | 结构化日志 | 每次模型调用、校验失败、来源读取和运行结束输出单行 JSON 事件，关联 session/task/request 与话术版本 | `tests/test_events.py`、`tests/test_serve.py` |
-| 自动化测试 | 142 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
+| 自动化测试 | 147 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
 | README 说明架构、取舍与生产扩展 | 本文件；架构细节见[设计评审稿](docs/DESIGN_REVIEW.md) | 本文件 |
 
 ### 1.2 已确认扩展的实现范围
@@ -112,7 +129,7 @@ uv run python -m entrypoints.serve
 
 | 证据 | 覆盖 | 能证明 | 不能证明 |
 |---|---|---|---|
-| 142 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/聊天页话术、`diagnostics` 持久化与历史回放 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
+| 147 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/聊天页话术、`diagnostics` 持久化与历史回放 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
 | 真实模型评测（[报告](docs/EVALUATION.md)） | 7 个样例：TX-001、TX-002、TX-002 补充、TX-003、TX-004、TX-INJECT、TX-003-CLEAN；单次运行、单一配置 | 这些样例当次全部交付、攻击前后分类一致、未发现敏感原值外发 | 普遍准确率、其他模型/供应商、其他攻击方式、统计显著性 |
 
 本仓库对“已实现并测试”“已实现但只做过小样本评测”“明确未实现”分别陈述，不把替身测试当作真实模型结论。
@@ -124,7 +141,7 @@ uv run python -m entrypoints.serve
 - Python 3.12（`pyproject.toml` 要求 `>=3.12`）。
 - 依赖见 `pyproject.toml`：LangChain、LangGraph SQLite checkpoint、FastAPI、Uvicorn、Gradio。
 - 一个 OpenAI 兼容的聊天补全端点与模型名；不需要与本仓库的任何评测配置相同。
-- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、142 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
+- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、147 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
 
 ### 2.2 环境变量
 
@@ -217,7 +234,7 @@ PYTHONPATH=src .venv/bin/python -m entrypoints.serve
 | `src/entrypoints/api.py` | FastAPI 路由、请求校验、领域错误到 HTTP 的映射 |
 | `src/entrypoints/serve.py` | 回环 Uvicorn 启动与逐行 JSON 日志格式 |
 | `src/entrypoints/chat.py` | Gradio 聊天页与人工审核 tab 的纯协程处理函数；结果卡、修复轨迹与“本次处理”折叠区，历史回放同一份事实 |
-| `tests/` | 142 个测试；真实 middleware + 模型替身 + 临时 SQLite |
+| `tests/` | 147 个测试；真实 middleware + 模型替身 + 临时 SQLite |
 
 依赖方向是：`entrypoints` → `support_extraction` → `runtime` 与 `middleware`；`streaming` 提供被运行时与页面共用的只读事件类型；`infrastructure` 实现接口并由外层注入。核心不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
 
@@ -413,6 +430,7 @@ JSON/schema 错误共享同一修复预算。模型调用异常、超时和来�
 - **结果卡**：显示 `SUCCESS` / `REPAIRED` / `FALLBACK`、模型调用与修复次数、请求编号、六字段表格，以及折叠的“结构化结果（已校验）”JSON。有修复时主区多一行“修复轨迹：第 N 次 阶段 · 字段:错误码”；签名只含字段路径与稳定错误码。FALLBACK 没有有效字段，结果显示失败说明、调用/修复次数、请求编号与审核编号。
 - **本次处理**：结果卡末尾的折叠区（标题“本次处理”）列出输入方式、来源版本、PII 类别与脱敏计数、标签中和数、预算用量与模型错误码。`SUCCESS`、`REPAIRED`、`FALLBACK` 都渲染可用字段；`ERROR` 卡只有在存在持久化事实时显示。
 - **FALLBACK 行动条**：审核保存成功时显示“本次 FALLBACK · 审核编号 ...”，点“查看审核”切到人工审核 tab 并回填该编号。
+- **审核演示入口**：输入区下方的“生成审核演示数据”使用本地失败模型产生一条 PENDING 审核项；说明固定为“仅演示：本地失败模型，不调用真实模型、不消耗额度”。正常提交仍只使用配置的真实模型。
 - **人工审核**：默认只显示脱敏来源与处理记录；勾选“显式展示受控原文”后才显示原文；过期证据明确标记“原文已过期”。
 - **只展示已校验字段**：页面不展示、不流式输出未校验的模型原始响应；修复轨迹只展示阶段与错误签名，不展示 `previous_output`；原始响应只在审核入口显式查看。
 
@@ -468,13 +486,41 @@ FALLBACK 的 `review_id` 只在审核项保存成功后返回；保存失败是�
 
 500 响应包含 `error_code`、`request_id`，以及适用时的 `source_saved`。入口和页面不能仅凭 HTTP 500 推断补充是否已保存：`source_saved=true` 表示来源已入库但后续失败，`false` 表示来源未保存，`null` 表示无法确认。
 
-### 4.4 如何查看人工审核
+### 4.4 人工审核怎么用
 
-1. `GET /reviews`：按创建时间倒序列出所有 `review_id`、`request_id`、状态（当前固定为 `PENDING`）、错误码、调用/修复次数。
-2. `GET /reviews/{review_id}`：默认只返回脱敏来源、每次 attempt 的错误码与 `raw_status`；不包含原文。
-3. `GET /reviews/{review_id}?include_raw=true`：显式请求受控原文。`raw_status` 为 `AVAILABLE`、`EXPIRED` 或 `UNAVAILABLE`；到期证据明确标记，不复制旧原文续期。
+审核项是 FALLBACK 运行的证据队列，初始状态固定为 `PENDING`。它记录失败事实，不是可编辑的工单。
 
-页面 `/ui` 的“人工审核” tab 可以刷新列表并查看详情；FALLBACK 行动条的“查看审核”会切到该 tab 并回填 `review_id`，其他情况下仍需手工粘贴；列表项本身没有可点击的详情链接。这是已知短板，不是隐藏行为。审核项当前只支持查看，不支持编辑、关闭或重新处理。
+**列表**
+
+`GET /reviews` 按创建时间倒序返回每个审核项：
+
+- `review_id`：审核编号；FALLBACK 结果卡与行动条显示该编号。
+- `request_id`：产生该审核项的提取请求编号。
+- `status`：当前固定为 `PENDING`。
+- `error_code`：运行失败原因，例如 `OUTPUT_INVALID`、`MODEL_TIMEOUT`、`MODEL_CALL_FAILED`。
+- `model_calls` / `repair_count`：实际模型调用与修复次数。
+
+页面“人工审核”tab 的“刷新审核列表”渲染同样的字段。
+
+**详情**
+
+`GET /reviews/{review_id}` 返回：
+
+- 脱敏来源：按 `sequence` 排列的来源快照，默认只有 `safe_text`，不含原文；每项带 `raw_status`（`AVAILABLE` / `EXPIRED` / `UNAVAILABLE`）。
+- 逐 attempt 处理记录：`attempt`、`error_code`、`latency_ms`（本次调用耗时）、`raw_status`，以及 `feedback` 中的失败阶段与 `error_signature`（字段路径 + 稳定错误码）。`feedback` 中的失败正文是安全处理后的副本，不是原文。
+- 运行级字段：审核编号、请求/会话/任务编号、状态、调用/修复次数、错误码。
+- 默认不返回 `raw_text` / `raw`；`GET /reviews/{review_id}?include_raw=true` 显式请求受控原文与每次模型原始输出。
+
+页面审核 tab 展示同一份脱敏来源与逐次处理记录；勾选“显式展示受控原文”后才追加原文。原文到期时，对应来源或 attempt 标记“（原文已过期）”，页面同时显示“原文已超过保留期限，当前仅可查看保留的脱敏材料与处理记录。”。
+
+**保留与边界**
+
+- 受控原文与每次模型原始输出各自默认保留七天，从保存时计算；生成新审核项或继续活跃会话都不会延长旧原文的保留期。
+- 七天到期后，脱敏来源与处理记录仍可查看，但原文标记为 `EXPIRED`，不会重新生成或补齐。
+- 当前只支持查看：不支持编辑字段、关闭审核或重新处理。审核项也不会改变原运行的失败事实。
+- 审核入口用于人工取证；它不提供审批动作，也不把审核结果回写到提取字段。
+
+页面 `/ui` 的“人工审核” tab 可以刷新列表并查看详情；FALLBACK 行动条的“查看审核”会切到该 tab 并回填 `review_id`，其他情况下仍需手工粘贴；列表项本身没有可点击的详情链接。这是已知短板，不是隐藏行为。
 
 ### 4.5 结构化日志
 
@@ -496,7 +542,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 PYTHONPATH=src .venv/bin/python -m ruff check .
 ```
 
-当前结果：`142 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
+当前结果：`147 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
 
 - 正常提取、修复后恢复、预算耗尽、空响应、非法 JSON、错误枚举/类型、缺字段、额外字段、超长摘要、意外工具调用。
 - 模型超时/调用失败/配置错误/未配置；来源不存在、内容非法、授权拒绝、策略故障。
@@ -504,6 +550,7 @@ PYTHONPATH=src .venv/bin/python -m ruff check .
 - PII 检测与脱敏、卡号尾号不单独触发、注入文本中和、模型实际输入不含敏感原值。
 - 上下文投影只含 system + 来源包（修复时加最近失败）、无旧答案/旧修复/其他任务材料、工具配置为空。
 - HTTP 状态映射、审核列表/详情/原文显式开关、聊天页话术与阶段事件、JSON 日志字段与关联、评测 NOT RUN 路径。
+- 审核演示入口：本地失败模型返回固定非法输出，三次 attempt 后产生可查询的 PENDING 审核项；演示不调用配置的真实模型，正常 `submit` 仍走真实模型工厂。
 - 每次运行的安全事实：输入方式、记录标识、PII 类别与脱敏计数、标签中和、修复阶段与安全签名、预算、模型错误码；旧库迁移与历史回放同一份 `diagnostics`。
 - 分层约束：`runtime` 与 `middleware` 不依赖入口或领域词汇；应用层注入话术与预算；模型工具配置为空。
 
