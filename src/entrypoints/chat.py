@@ -852,7 +852,10 @@ def create_ui(service_provider):
         async for state in demo_review(
             service_provider(), session_id, messages=messages
         ):
-            yield render(state)
+            yield (
+                *render(state),
+                format_panel(await list_reviews(service_provider())),
+            )
 
     async def on_restore(session_id):
         return render(await restore(service_provider(), session_id))
@@ -971,7 +974,7 @@ def create_ui(service_provider):
         demo_button.click(
             on_demo,
             inputs=[chatbot, session_box],
-            outputs=outputs,
+            outputs=[*outputs, reviews_view],
         )
         sample_button.click(
             on_record,
