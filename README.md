@@ -10,6 +10,29 @@
 
 文档按 grill-with-docs 的方式维护：规格记录已确认决策及验收要求，[术语表](GLOSSARY.md)定义领域词汇，ADR 记录架构取舍；不重新访谈已确认需求。
 
+## 本机运行
+
+需要 Python 3.12 与 [uv](https://docs.astral.sh/uv/)。在仓库根目录配置供应商后启动：
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=...
+uv run python -m entrypoints.serve
+```
+
+PowerShell 用 `$env:OPENAI_API_KEY = "..."` 与 `$env:OPENAI_MODEL = "..."` 设置环境变量。服务只监听 `127.0.0.1:8000`；`HARNESS_PORT` 修改端口，`HARNESS_DATA_DIR` 修改 SQLite 目录（默认 `runtime/`）。运行事件由标准 logging 以逐行 JSON 输出。
+
+冒烟检查（第一条不调用模型；第二条调用已配置的模型）：
+
+```bash
+curl -sS http://127.0.0.1:8000/reviews
+curl -sS -X POST http://127.0.0.1:8000/extractions \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "支付账单时应用崩溃。"}'
+```
+
+缺少 `OPENAI_API_KEY` 或 `OPENAI_MODEL` 时提取返回 500 `MODEL_NOT_CONFIGURED`，不会静默切换模型替身。
+
 ## 开发方向
 
 - LangChain 原生 middleware 作为 Harness 基座。
