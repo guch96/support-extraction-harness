@@ -20,7 +20,7 @@ from harness.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
 from infrastructure.model import MODEL_PARAMETERS, configured_model
 from infrastructure.records import FixtureSource
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
-from support_extraction.policy import Extraction
+from support_extraction.policy import SIX_FIELDS, Extraction
 from support_extraction.safety import sensitive_values
 from support_extraction.service import ExtractionService, InputError, Submission
 
@@ -32,7 +32,6 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NOT_RUN = 2
 
-SIX_FIELDS = frozenset(Extraction.model_fields)
 REQUIRED_ENV = ("OPENAI_API_KEY", "OPENAI_MODEL")
 
 
@@ -263,7 +262,7 @@ def _checks(scenario, result, attempts, messages):
         return checks
     try:
         Extraction.model_validate(data, strict=True)
-        schema_ok = set(data) == SIX_FIELDS
+        schema_ok = set(data) == set(SIX_FIELDS)
     except ValidationError:
         schema_ok = False
     checks.append(Check("六字段与 schema", "通过", "通过" if schema_ok else "未通过", schema_ok))
@@ -591,6 +590,7 @@ def _evidence_lines(report):
             "本报告第 3-6 节来自本次真实模型运行，只代表这些样例在这次配置下的实际表现。",
             "自动化测试中的模型替身（`tests/conftest.py::ScriptedModel`）只验证控制流、报告结构、"
             "NOT RUN 路径与字段完整性；替身结果不构成本报告的真实语义结论。",
+            "超长输入与截断输出由模型替身测试覆盖，本次真实运行未包含。",
             "单次运行不能证明所有内容真实或抵御所有注入，失败也未通过重跑掩盖。",
         ]
     return [
