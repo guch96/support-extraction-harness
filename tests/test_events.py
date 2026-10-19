@@ -6,7 +6,7 @@ import pytest
 from conftest import ScriptedModel
 from test_harness import make_harness, source
 
-from harness.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
+from runtime.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
 from support_extraction.service import ExtractionService, InputError, Submission
 
 EVENT_LOGGER = "support_harness.events"

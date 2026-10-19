@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from entrypoints import serve
-from harness.events import event
+from runtime.events import event
 
 
 def test_configure_logging_emits_one_json_object_per_line():

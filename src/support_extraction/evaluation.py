@@ -15,10 +15,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr, ValidationError
 
-from harness.contracts import ServiceError
-from harness.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
 from infrastructure.model import MODEL_PARAMETERS, configured_model
 from infrastructure.records import FixtureSource
+from runtime.contracts import ServiceError
+from runtime.prompts import EXTRACTION_PROMPT_VERSION, REPAIR_PROMPT_VERSION
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
 from support_extraction.policy import SIX_FIELDS, Extraction
 from support_extraction.safety import sensitive_values

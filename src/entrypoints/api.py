@@ -7,10 +7,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from harness.contracts import ServiceError
 from infrastructure.model import configured_model
 from infrastructure.records import FixtureSource
 from infrastructure.sqlite import identifier
+from runtime.contracts import ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
 from support_extraction.service import ExtractionService, InputError, Submission
 

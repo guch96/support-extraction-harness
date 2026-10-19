@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from langchain_core.messages import AIMessage
 from pydantic import ValidationError
 
-from harness.contracts import OutputContract, RunInput
+from runtime.contracts import OutputContract, RunInput
 
 
 @dataclass(frozen=True)

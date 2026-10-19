@@ -5,7 +5,8 @@ from conftest import ScriptedModel
 from langchain_core import exceptions as model_errors
 from langchain_core.messages import AIMessage
 
-from harness.runtime import Harness, RunInput
+from runtime.contracts import RunInput
+from runtime.engine import Harness
 from support_extraction.policy import contract
 
 
@@ -221,7 +222,7 @@ async def test_model_call_failures_fall_back_with_a_durable_review(exc, code):
 
 @pytest.mark.parametrize("exc", CONFIG_ERRORS)
 async def test_model_config_errors_are_service_errors_without_a_review(exc):
-    from harness.contracts import ServiceError
+    from runtime.contracts import ServiceError
 
     harness, model, audit = make_harness([exc])
     with pytest.raises(ServiceError) as raised:
@@ -235,7 +236,7 @@ async def test_model_config_errors_are_service_errors_without_a_review(exc):
 
 
 async def test_unknown_exception_stays_internal_error():
-    from harness.contracts import ServiceError
+    from runtime.contracts import ServiceError
 
     harness, _, audit = make_harness([RuntimeError("unexpected")])
     with pytest.raises(ServiceError) as raised:
@@ -259,7 +260,7 @@ async def test_unexpected_tool_call_is_never_executed(valid_json):
 
 
 async def test_review_failure_is_service_error():
-    from harness.runtime import ServiceError
+    from runtime.contracts import ServiceError
 
     class BrokenAudit(MemoryAudit):
         def run_finished(self, result):
