@@ -2,9 +2,15 @@ import json
 
 from conftest import ScriptedModel
 
+from runtime.contracts import SourceUnavailable
 from streaming.events import Phase
 from streaming.phase_sink import PhaseSink
 from support_extraction.service import ExtractionService, Submission
+
+
+class FailingSource:
+    async def read(self, record_id):
+        raise SourceUnavailable("RECORD_NOT_FOUND")
 
 
 class RecordSource:
@@ -116,6 +122,27 @@ async def test_direct_text_never_reports_reading(tmp_path, valid_json):
 
     assert Phase.READING not in [chat_event.phase for chat_event in sink._events]
     assert labels(sink) == ["正在调用模型", "正在校验输出", "提取完成"]
+
+
+async def test_unavailable_record_finishes_the_stream_as_failed(tmp_path):
+    sink = PhaseSink()
+    app = await ExtractionService.open(
+        tmp_path,
+        lambda: ScriptedModel(responses=[]),
+        source_reader=FailingSource(),
+        allowed_records={"TX-001"},
+    )
+    try:
+        result = await app.submit(Submission(record_id="TX-001"), phases=sink)
+    finally:
+        await app.close()
+
+    assert result.outcome == "FALLBACK" and result.review_id
+    assert [chat_event.phase for chat_event in sink._events] == [
+        Phase.READING,
+        Phase.FAILED,
+    ]
+    assert labels(sink) == ["正在读取预置记录", "未取得合格结果，已转人工审核"]
 
 
 async def test_pii_values_stay_out_of_phase_labels_and_history_sources(tmp_path, valid_json):
