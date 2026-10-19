@@ -8,19 +8,21 @@ from pathlib import Path
 
 from harness.contracts import RunResult
 
+RAW_RETENTION_SECONDS = 7 * 86400
+
 
 def identifier():
     return uuid.uuid4().hex
 
 
 class SQLiteStore:
-    def __init__(self, path: Path, clock=time.time):
+    def __init__(self, path: Path, clock=time.time, session_ttl_seconds=7 * 86400):
         path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(path.parent, 0o700)
         path.touch(mode=0o600, exist_ok=True)
         os.chmod(path, 0o600)
         self.clock = clock
-        self.session_ttl = 7 * 86400
+        self.session_ttl = session_ttl_seconds
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript("""
@@ -203,15 +205,13 @@ class SQLiteStore:
                     (run["id"],),
                 )
             self.run_finished(
-                RunResult(
-                    session_id=run["session_id"],
-                    task_id=run["task_id"],
-                    request_id=run["id"],
-                    outcome="FALLBACK",
-                    data=None,
+                RunResult.fallback(
+                    run["session_id"],
+                    run["task_id"],
+                    run["id"],
+                    "INTERRUPTED",
                     model_calls=run["model_calls"],
                     repair_count=run["repair_count"],
-                    error_code="INTERRUPTED",
                 )
             )
 
@@ -240,10 +240,10 @@ class SQLiteStore:
             db.execute("UPDATE sessions SET cleared=1 WHERE id=?", (session_id,))
             for task in tasks:
                 db.execute("UPDATE sources SET safe_text=NULL WHERE task_id=?", (task["id"],))
-        return [f"{session_id}:{task['id']}:extractor" for task in tasks]
+        return [task["id"] for task in tasks]
 
     def cleanup(self):
-        cutoff = self.clock() - 7 * 86400
+        cutoff = self.clock() - RAW_RETENTION_SECONDS
         with self.transaction() as db:
             db.execute("UPDATE sources SET raw_text=NULL WHERE created_at<=?", (cutoff,))
             db.execute("UPDATE attempts SET raw=NULL WHERE started_at<=?", (cutoff,))

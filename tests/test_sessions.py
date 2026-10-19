@@ -113,6 +113,40 @@ async def test_idle_session_expires_across_restart_without_model_replay(tmp_path
         await app.close()
 
 
+async def test_configurable_session_ttl_keeps_raw_retention_independent(tmp_path):
+    now = [1000000.0]
+    model = ScriptedModel(responses=["bad", "bad", "bad"])
+    app = await ExtractionService.open(
+        tmp_path, lambda: model, clock=lambda: now[0], session_ttl_days=1
+    )
+    try:
+        failed = await app.submit(Submission(text="密码是 TtlSecret123。支付失败。"))
+        assert failed.outcome == "FALLBACK" and failed.review_id
+        now[0] += 1.5 * 86400
+        with pytest.raises(InputError, match="SESSION_EXPIRED"):
+            await app.restore(failed.session_id)
+        review = await app.review(failed.review_id, raw=True)
+        assert review["sources"][0]["raw_text"] == "密码是 TtlSecret123。支付失败。"
+        assert review["sources"][0]["raw_status"] == "AVAILABLE"
+    finally:
+        await app.close()
+
+
+async def test_default_session_ttl_remains_seven_days(tmp_path, valid_json):
+    now = [1000000.0]
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model, clock=lambda: now[0])
+    try:
+        result = await app.submit(Submission(text="普通咨询。"))
+        now[0] += 6 * 86400
+        assert app.store.cleanup() == []
+        now[0] += 2 * 86400
+        with pytest.raises(InputError, match="SESSION_EXPIRED"):
+            await app.restore(result.session_id)
+    finally:
+        await app.close()
+
+
 async def test_cleared_session_cannot_restore_or_accept_more_sources(tmp_path, valid_json):
     model = ScriptedModel(responses=[valid_json])
     app = await ExtractionService.open(tmp_path, lambda: model)

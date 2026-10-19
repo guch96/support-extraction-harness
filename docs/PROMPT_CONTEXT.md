@@ -1,6 +1,6 @@
 # 模型上下文契约与话术模板
 
-日期：2026-10-18。适用当前[单提取 Agent 规格](specs/2026-10-18-support-extraction-harness-design.md)。这是上下文构造、首次提取与输出修复的话术依据，尚未作为产品代码运行或通过真实模型评测。
+日期：2026-10-18。适用当前[单提取 Agent 规格](specs/2026-10-18-support-extraction-harness-design.md)。已于 2026-10-19 实施，验证见[README](../README.md)与[评测报告](EVALUATION.md)。这是上下文构造、首次提取与输出修复的话术依据。
 
 ## 1. 角色与权限用语
 

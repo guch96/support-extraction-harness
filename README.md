@@ -9,7 +9,7 @@
 - [领域术语表](GLOSSARY.md)
 - [ADR 目录](docs/adr/)
 
-> **证据边界（请先读）**：101 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
+> **证据边界（请先读）**：116 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
 
 ## 1. 项目说明与状态
 
@@ -24,7 +24,7 @@
 | 提示词注入缓解 | 来源先检测 PII、脱敏、标签中和，再用随机边界与 JSON 转义包装；模型无业务工具，记录读取由代码白名单控制 | `tests/test_benchmark_records.py`、`tests/test_records.py` |
 | 敏感信息保护 | 原文与脱敏来源分开保存；日志、错误、默认页面和修复材料只含脱敏内容 | `tests/test_events.py`、`tests/test_ui.py` |
 | 结构化日志 | 每次模型调用、校验失败、来源读取和运行结束输出单行 JSON 事件，关联 session/task/request 与话术版本 | `tests/test_events.py`、`tests/test_serve.py` |
-| 自动化测试 | 101 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
+| 自动化测试 | 116 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
 | README 说明架构、取舍与生产扩展 | 本文件；架构细节见[设计评审稿](docs/DESIGN_REVIEW.md) | 本文件 |
 
 ### 1.2 已确认扩展的实现范围
@@ -43,7 +43,7 @@
 
 | 证据 | 覆盖 | 能证明 | 不能证明 |
 |---|---|---|---|
-| 101 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/UI 话术 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
+| 116 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/UI 话术 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
 | 真实模型评测（[报告](docs/EVALUATION.md)） | 7 个样例：TX-001、TX-002、TX-002 补充、TX-003、TX-004、TX-INJECT、TX-003-CLEAN；单次运行、单一配置 | 这些样例当次全部交付、攻击前后分类一致、未发现敏感原值外发 | 普遍准确率、其他模型/供应商、其他攻击方式、统计显著性 |
 
 本仓库对“已实现并测试”“已实现但只做过小样本评测”“明确未实现”分别陈述，不把替身测试当作真实模型结论。
@@ -66,6 +66,7 @@
 | `OPENAI_MODEL` | 是 | — | 模型名 |
 | `HARNESS_DATA_DIR` | 否 | `runtime` | SQLite 审计库与 checkpoint 目录 |
 | `HARNESS_PORT` | 否 | `8000` | 服务端口；主机固定为 `127.0.0.1` |
+| `HARNESS_SESSION_TTL_DAYS` | 否 | `7` | 会话连续未使用多少天后过期（单位：天）；原文保留期仍独立固定为 7 天 |
 
 仓库提供[`.env.example`](.env.example)，只含占位值，不含任何真实凭据。应用**不会自动加载** `.env`；请显式导出变量。例如在 bash 中：
 
@@ -147,7 +148,7 @@ curl -sS 'http://127.0.0.1:8000/reviews/<review_id>?include_raw=true'
 | `src/entrypoints/api.py` | FastAPI 路由、请求校验、领域错误到 HTTP 的映射 |
 | `src/entrypoints/serve.py` | 回环 Uvicorn 启动与逐行 JSON 日志格式 |
 | `src/entrypoints/ui.py` | Gradio 页面与纯协程处理函数；默认只展示脱敏内容 |
-| `tests/` | 101 个测试；真实 middleware + 模型替身 + 临时 SQLite |
+| `tests/` | 116 个测试；真实 middleware + 模型替身 + 临时 SQLite |
 
 依赖方向是：`entrypoints` → `support_extraction` → `harness`；`infrastructure` 实现接口并由外层注入。`harness` 不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
 
@@ -308,7 +309,7 @@ JSON/schema 错误共享同一修复预算。模型调用异常、超时和来�
 
 - `HARNESS_DATA_DIR` 下有两个文件：`audit.sqlite3`（来源、运行、attempt、审核）和 `checkpoints.sqlite3`（LangGraph checkpoint）。
 - 文件权限为 `0600`，目录为 `0700`；启用 WAL 和 `secure_delete`。这**不等于加密**。
-- 会话默认连续七天未使用后过期；显式清空立即使旧 `sessionId` 无法恢复，并删除对应 checkpoint。
+- 会话默认连续七天未使用后过期，可用 `HARNESS_SESSION_TTL_DAYS` 调整；显式清空立即使旧 `sessionId` 无法恢复，并删除对应 checkpoint。
 - 受控原文与每次模型原始输出各自默认保留七天，按保存时间计算；活跃会话、新增补充或新审核项**不延长**旧原文保留期。
 - 原文到期后仍用保留的脱敏来源继续提取；审核详情把对应证据标为 `EXPIRED`，不把脱敏损失补齐。
 - 重启会恢复会话与 checkpoint，但**不自动续跑**中断的模型调用；已发生的中断运行被标记为 FALLBACK 并生成 PENDING 审核项。
@@ -391,7 +392,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 PYTHONPATH=src .venv/bin/python -m ruff check .
 ```
 
-当前结果：`101 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
+当前结果：`116 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
 
 - 正常提取、修复后恢复、预算耗尽、空响应、非法 JSON、错误枚举/类型、缺字段、额外字段、超长摘要、意外工具调用。
 - 模型超时/调用失败/配置错误/未配置；来源不存在、内容非法、授权拒绝、策略故障。

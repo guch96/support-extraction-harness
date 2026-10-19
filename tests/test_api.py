@@ -55,6 +55,15 @@ def test_http_rejections_do_not_expose_request_values_or_call_model(tmp_path, va
         assert model.calls == []
 
 
+def test_app_passes_the_configured_session_ttl_to_the_store(tmp_path):
+    model = ScriptedModel(responses=[])
+    app = create_app(
+        directory=tmp_path, model_factory=lambda: model, ui=False, session_ttl_days=1
+    )
+    with TestClient(app) as client:
+        assert client.app.state.service.store.session_ttl == 86400
+
+
 def test_ui_is_mounted_beside_the_api_routes(tmp_path, valid_json):
     model = ScriptedModel(responses=[valid_json])
     app = create_app(directory=tmp_path, model_factory=lambda: model, ui=True)

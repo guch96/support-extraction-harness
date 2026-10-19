@@ -32,6 +32,7 @@ def create_app(
     max_source_chars=20000,
     source_reader=None,
     allowed_records=BENCHMARK_RECORD_IDS,
+    session_ttl_days=7,
 ):
     directory = directory or os.getenv("HARNESS_DATA_DIR", "runtime")
     model_factory = model_factory or configured_model
@@ -45,6 +46,7 @@ def create_app(
             max_source_chars=max_source_chars,
             source_reader=source_reader,
             allowed_records=allowed_records,
+            session_ttl_days=session_ttl_days,
         )
         try:
             yield
@@ -55,21 +57,37 @@ def create_app(
 
     @app.exception_handler(InputError)
     async def input_error(request, exc):
-        status = {"SESSION_EXPIRED": 410, "SESSION_NOT_FOUND": 404,
-                  "TASK_NOT_FOUND": 404, "TASK_BUSY": 409, "SOURCE_TOO_LARGE": 413,
-                  "ACCESS_DENIED": 403, "REVIEW_NOT_FOUND": 404}.get(exc.code, 422)
-        return JSONResponse(status_code=status,
-                            content={"error_code": exc.code, "request_id": exc.request_id})
+        status = {
+            "SESSION_EXPIRED": 410,
+            "SESSION_NOT_FOUND": 404,
+            "TASK_NOT_FOUND": 404,
+            "TASK_BUSY": 409,
+            "SOURCE_TOO_LARGE": 413,
+            "ACCESS_DENIED": 403,
+            "REVIEW_NOT_FOUND": 404,
+        }.get(exc.code, 422)
+        return JSONResponse(
+            status_code=status,
+            content={"error_code": exc.code, "request_id": exc.request_id},
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
-        return JSONResponse(status_code=422,
-                            content={"error_code": "INVALID_INPUT", "request_id": identifier()})
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "INVALID_INPUT", "request_id": identifier()},
+        )
 
     @app.exception_handler(ServiceError)
     async def service_error(request, exc):
-        return JSONResponse(status_code=500, content={"error_code": exc.code,
-                            "request_id": exc.request_id, "source_saved": exc.source_saved})
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error_code": exc.code,
+                "request_id": exc.request_id,
+                "source_saved": exc.source_saved,
+            },
+        )
 
     @app.post("/extractions")
     async def extract(body: ExtractionRequest, request: Request):

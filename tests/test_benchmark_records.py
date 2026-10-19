@@ -7,16 +7,8 @@ from fastapi.testclient import TestClient
 from entrypoints.api import create_app
 from infrastructure.records import FixtureSource
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
+from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService, InputError, Submission
-
-SIX_FIELDS = {
-    "customer_id",
-    "issue_category",
-    "urgency",
-    "summary",
-    "actionable_steps",
-    "detected_pii",
-}
 
 
 def fixture_data():
@@ -88,7 +80,7 @@ async def test_tx001_card_tail_alone_does_not_set_detected_pii(tmp_path, valid_j
     try:
         result = await app.submit(Submission(record_id="TX-001"))
         assert result.outcome == "SUCCESS"
-        assert set(result.data) == SIX_FIELDS
+        assert set(result.data) == set(SIX_FIELDS)
         assert result.data["customer_id"] == "CUST-98234"
         assert result.data["issue_category"] == "BILLING"
         assert result.data["detected_pii"] is False
@@ -157,7 +149,7 @@ async def test_tx003_attack_text_cannot_replace_the_six_field_contract(tmp_path,
     try:
         result = await app.submit(Submission(record_id="TX-003"))
         assert result.outcome == "REPAIRED" and result.repair_count == 1
-        assert set(result.data) == SIX_FIELDS
+        assert set(result.data) == set(SIX_FIELDS)
         assert result.data["customer_id"] is None
         assert result.data["issue_category"] == "TECHNICAL"
         assert result.data["urgency"] == "MEDIUM"
@@ -222,7 +214,7 @@ async def test_truncated_output_fixture_is_repaired_before_delivery(tmp_path, va
     try:
         result = await app.submit(Submission(record_id="TX-001"))
         assert result.outcome == "REPAIRED" and result.repair_count == 1
-        assert set(result.data) == SIX_FIELDS
+        assert set(result.data) == set(SIX_FIELDS)
         assert any("客户报告发票被重复扣款" in message.content for message in model.calls[1])
         assert source.reads == ["TX-001"]
     finally:

@@ -205,3 +205,17 @@ def test_report_never_contains_the_api_key(tmp_path, monkeypatch):
     assert "sk-test-should-never-appear" not in text
     assert "injected-model" in text
     assert "https://example.test/v1" in text
+
+
+async def test_real_report_limits_overlong_and_truncated_evidence_to_doubles():
+    provider = ProviderInfo(
+        name="OpenAI-compatible (test)",
+        base_url=None,
+        model="test-model",
+        kind="real",
+    )
+    report = await evaluate(
+        model_factory=scripted_factory(responses()), provider=provider
+    )
+    text = render_report(report)
+    assert "超长输入与截断输出由模型替身测试覆盖，本次真实运行未包含。" in text

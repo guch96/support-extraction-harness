@@ -110,6 +110,7 @@ async def test_source_read_and_denial_events_carry_reason_and_timing(
     read = only(records, "source_read")
     assert read["reason"] == "ACCESS_GRANTED"
     assert read["outcome"] == "RECEIVED"
+    assert "error_code" not in read
     assert 15 <= read["latency_ms"] < 5000
 
     denied = only(records, "source_denied")

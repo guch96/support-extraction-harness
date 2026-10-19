@@ -10,10 +10,9 @@ from typing import Any
 
 from harness.contracts import RunResult, ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, SAMPLE_RECORD_IDS
-from support_extraction.policy import Extraction
+from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService, InputError, Submission
 
-SIX_FIELDS = tuple(Extraction.model_fields)
 FIELD_LABELS = {
     "customer_id": "客户 ID",
     "issue_category": "问题类别",
@@ -135,7 +134,7 @@ async def extract(
                 text=text,
                 record_id=record_id,
                 session_id=session_id or None,
-                task_id=task_id or None,
+                task_id=None if new_task else (task_id or None),
                 new_task=new_task,
             )
         )
@@ -368,13 +367,13 @@ def format_panel(panel: dict[str, Any]) -> str:
         if panel.get("task_id"):
             lines.append(f"当前任务：{panel['task_id']}")
         lines.extend(["", *_format_sources(panel["sources"], include_raw=False)])
-        lines.extend(["", "**历史运行**"])
+        lines.extend(["", "**历史有效结果**"])
         for run in panel["history"]:
             lines.append(f"- 请求 {run['request_id']}：{run['status']}。{run['notice']}")
             if run["fields"]:
                 lines.append(f"  - 摘要：{run['fields'].get('summary', '（无）')}")
         if not panel["history"]:
-            lines.append("- 暂无历史运行")
+            lines.append("- 暂无历史有效结果")
     elif kind == "review":
         lines.append(f"**审核项**：{panel['review_id']}")
         lines.append(

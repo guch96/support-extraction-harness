@@ -48,7 +48,10 @@ def configure_logging(stream=None):
 def main():
     configure_logging()
     port = int(os.getenv("HARNESS_PORT", str(DEFAULT_PORT)))
-    uvicorn.run(create_app(ui=True), host=HOST, port=port)
+    session_ttl_days = int(os.getenv("HARNESS_SESSION_TTL_DAYS", "7"))
+    uvicorn.run(
+        create_app(ui=True, session_ttl_days=session_ttl_days), host=HOST, port=port
+    )
 
 
 if __name__ == "__main__":
