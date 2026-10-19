@@ -356,6 +356,17 @@ async def test_reviews_hide_raw_until_requested_and_mark_expired_evidence(tmp_pa
         assert "raw_text" not in detail["sources"][0]
         assert "raw" not in detail["attempts"][0]
         assert detail["sources"][0]["text"] == "客户支付失败。"
+        assert len(detail["attempts"]) == 3
+        assert all(
+            attempt["validation_stage"] == "raw_schema"
+            and attempt["error_signature"]
+            for attempt in detail["attempts"]
+        )
+        rendered = chat.format_panel(detail)
+        assert "raw_schema" in rendered
+        assert "耗时 " in rendered and " ms" in rendered
+        assert "原文：" not in rendered
+        assert '"bad"' not in rendered
 
         raw = await chat.review_detail(
             service, failed["fallback_review_id"], include_raw=True
@@ -364,6 +375,9 @@ async def test_reviews_hide_raw_until_requested_and_mark_expired_evidence(tmp_pa
         assert raw["sources"][0]["raw_text"] == "客户支付失败。"
         assert raw["attempts"][0]["raw"] is not None
         assert len(raw["attempts"]) == 3
+        raw_rendered = chat.format_panel(raw)
+        assert "原文：" in raw_rendered
+        assert '"bad"' in raw_rendered
 
         now[0] += 8 * 86400
         expired = await chat.review_detail(
@@ -376,6 +390,8 @@ async def test_reviews_hide_raw_until_requested_and_mark_expired_evidence(tmp_pa
         rendered = chat.format_panel(expired)
         assert chat.EXPIRED_NOTICE in rendered
         assert "原文已过期" in rendered
+        assert "raw_schema" in rendered and "耗时 " in rendered
+        assert "原文：" not in rendered
         assert len(model.calls) == 3
     finally:
         await service.close()
