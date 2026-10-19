@@ -53,6 +53,18 @@ class AuditSink(Protocol):
     def run_finished(self, result: RunResult) -> str | None: ...
 
 
+class SourceUnavailable(Exception):
+    """An expected source read failure, raised by a source adapter.
+
+    Any other adapter exception is a policy fault and must not be treated as an
+    expected read failure.
+    """
+
+    def __init__(self, code: str = "SOURCE_UNAVAILABLE"):
+        super().__init__(code)
+        self.code = code
+
+
 class ServiceError(Exception):
     def __init__(self, code: str, request_id: str, source_saved: bool | None = None):
         super().__init__(code)
