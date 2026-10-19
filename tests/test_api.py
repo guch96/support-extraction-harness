@@ -1,5 +1,6 @@
 from conftest import ScriptedModel
 from fastapi.testclient import TestClient
+from langchain_core import exceptions as model_errors
 
 from entrypoints.api import create_app
 
@@ -76,3 +77,36 @@ def test_missing_model_configuration_returns_explicit_service_error(tmp_path, mo
         assert response.json()["error_code"] == "MODEL_NOT_CONFIGURED"
         assert response.json()["source_saved"] is True
         assert client.get("/reviews").json() == []
+
+
+def test_http_authentication_failure_is_a_visible_fallback(tmp_path):
+    model = ScriptedModel(responses=[model_errors.ModelAuthenticationError("bad key")])
+    app = create_app(directory=tmp_path, model_factory=lambda: model, ui=False)
+    with TestClient(app) as client:
+        response = client.post("/extractions", json={"text": "支付失败。"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["outcome"] == "FALLBACK" and body["data"] is None
+        assert body["error_code"] == "MODEL_CALL_FAILED"
+        assert body["model_calls"] == 1 and body["repair_count"] == 0
+        reviews = client.get("/reviews").json()
+        assert reviews[0]["review_id"] == body["review_id"]
+        detail = client.get(f"/reviews/{body['review_id']}").json()
+        assert detail["error_code"] == "MODEL_CALL_FAILED"
+        assert detail["attempts"][0]["error_code"] == "MODEL_CALL_FAILED"
+        assert detail["attempts"][0]["latency_ms"] >= 0
+        assert len(model.calls) == 1
+
+
+def test_http_model_configuration_failure_has_no_review(tmp_path):
+    model = ScriptedModel(responses=[model_errors.ModelNotFoundError("model missing")])
+    app = create_app(directory=tmp_path, model_factory=lambda: model, ui=False)
+    with TestClient(app) as client:
+        response = client.post("/extractions", json={"text": "支付失败。"})
+        assert response.status_code == 500
+        body = response.json()
+        assert body["error_code"] == "MODEL_CONFIG_ERROR"
+        assert body["request_id"]
+        assert body["source_saved"] is True
+        assert client.get("/reviews").json() == []
+        assert len(model.calls) == 1
