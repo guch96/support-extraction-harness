@@ -19,6 +19,7 @@ from runtime.engine import Harness
 from runtime.events import event
 from streaming.events import Phase
 from streaming.phase_sink import PhaseSink
+from support_extraction.demo import DEMO_TEXT, DemoFailureModel
 from support_extraction.policy import contract
 from support_extraction.safety import sanitize, scan, sensitive_values
 
@@ -131,6 +132,27 @@ class ExtractionService:
             await self.checkpointer.adelete_thread(extractor_thread(session_id, task_id))
 
     async def submit(self, submission: Submission, phases: PhaseSink | None = None):
+        return await self._submit(submission, phases, self.model_factory)
+
+    async def seed_review_demo(self, session_id: str | None = None) -> RunResult:
+        """Generate one PENDING review with the local failing model.
+
+        The demo uses the same reserve/source/Harness/review path as a normal
+        submission; only the model factory is replaced. The configured model
+        factory is never invoked.
+        """
+        return await self._submit(
+            Submission(text=DEMO_TEXT, session_id=session_id),
+            model_factory=DemoFailureModel,
+        )
+
+    async def _submit(
+        self,
+        submission: Submission,
+        phases: PhaseSink | None = None,
+        model_factory=None,
+    ):
+        model_factory = model_factory or self.model_factory
         await self.maintenance()
         request_id = identifier()
         if (
@@ -259,7 +281,7 @@ class ExtractionService:
                 known,
             )
             harness = Harness(
-                self.model_factory(),
+                model_factory(),
                 contract(),
                 self.store,
                 phase_sink=phases,

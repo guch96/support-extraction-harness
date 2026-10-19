@@ -16,6 +16,7 @@ from runtime.contracts import RunResult, ServiceError
 from streaming.events import ChatEvent
 from streaming.phase_sink import PhaseSink
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, SAMPLE_RECORD_IDS
+from support_extraction.demo import DEMO_TEXT
 from support_extraction.policy import SIX_FIELDS
 from support_extraction.service import ExtractionService, InputError, Submission
 
@@ -50,6 +51,9 @@ EXPIRED_MARKER = "（原文已过期）"
 HISTORICAL_NOTICE = "这是请求 {request_id} 的历史结果，未必反映最新补充。"
 UNKNOWN_NOTICE = "暂无法确认补充是否已保存，请按请求编号查询。"
 FALLBACK_ACTION_NOTICE = "本次 FALLBACK · 审核编号 `{review_id}`"
+DEMO_BUTTON = "生成审核演示数据"
+DEMO_NOTICE = "仅演示：本地失败模型，不调用真实模型、不消耗额度"
+DEMO_MESSAGE = "【演示】已生成一条待人工审核记录。"
 REPAIR_TRACE_PREFIX = "修复轨迹："
 PROCESSING_SUMMARY = "本次处理"
 PROCESSING_INPUT_TEXT = "直接文本"
@@ -269,7 +273,10 @@ async def _stream(
     session_id: str | None,
     task_id: str | None,
     armed: bool,
+    runner=None,
+    announce: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
+    runner = runner or service.submit
     history = _with_placeholder(messages, user_text)
     previous_count = await _source_count(service, session_id, task_id)
     yield _page_state(
@@ -281,7 +288,7 @@ async def _stream(
     )
 
     sink = PhaseSink()
-    task = asyncio.create_task(service.submit(submission, phases=sink))
+    task = asyncio.create_task(runner(submission, phases=sink))
     event_task: asyncio.Task | None = None
     try:
         while True:
@@ -322,7 +329,12 @@ async def _stream(
         if not task.done():
             await _cancel(task)
 
-    history = _replace_last_placeholder(history, format_result_card(result_panel(result)))
+    history = history[:-1]
+    if announce:
+        history.append({"role": "assistant", "content": announce})
+    history.append(
+        {"role": "assistant", "content": format_result_card(result_panel(result))}
+    )
     fallback_review_id = (
         result.review_id if result.outcome == "FALLBACK" else None
     )
@@ -383,6 +395,30 @@ async def send_record(
         session_id=session_id,
         task_id=None,
         armed=False,
+    ):
+        yield state
+
+
+async def demo_review(
+    service: ExtractionService,
+    session_id: str | None,
+    messages: list[dict[str, Any]] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Generate one PENDING review with the local failing model."""
+
+    async def run(_submission, phases=None):
+        return await service.seed_review_demo(session_id or None)
+
+    async for state in _stream(
+        service,
+        None,
+        messages,
+        user_text=DEMO_TEXT,
+        session_id=session_id,
+        task_id=None,
+        armed=False,
+        runner=run,
+        announce=DEMO_MESSAGE,
     ):
         yield state
 
@@ -812,6 +848,12 @@ def create_ui(service_provider):
         ):
             yield render(state)
 
+    async def on_demo(messages, session_id):
+        async for state in demo_review(
+            service_provider(), session_id, messages=messages
+        ):
+            yield render(state)
+
     async def on_restore(session_id):
         return render(await restore(service_provider(), session_id))
 
@@ -874,6 +916,9 @@ def create_ui(service_provider):
                         placeholder="直接粘贴客户对话；默认补充当前任务",
                     )
                     send_button = gr.Button("发送", variant="primary", scale=1)
+                with gr.Row():
+                    demo_button = gr.Button(DEMO_BUTTON)
+                gr.Markdown(DEMO_NOTICE)
                 gr.Markdown(SUPPLEMENT_NOTICE)
                 with gr.Accordion("读取预置记录（发送时新建任务）", open=False):
                     gr.Markdown(RECORD_MODE_NOTICE)
@@ -921,6 +966,11 @@ def create_ui(service_provider):
         text_box.submit(
             on_send,
             inputs=[text_box, chatbot, session_box, task_state, new_task_box],
+            outputs=outputs,
+        )
+        demo_button.click(
+            on_demo,
+            inputs=[chatbot, session_box],
             outputs=outputs,
         )
         sample_button.click(
