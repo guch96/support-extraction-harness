@@ -8,6 +8,16 @@ from typing import Any, NotRequired
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, AgentState, ModelResponse, hook_config
+from langchain_core.exceptions import (
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
+    ModelInvalidRequestError,
+    ModelNotFoundError,
+    ModelPermissionDeniedError,
+    ModelRateLimitError,
+    ModelTimeoutError,
+)
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from pydantic import ValidationError
@@ -87,9 +97,23 @@ class ModelCallFailure(Exception):
     pass
 
 
+CONFIG_ERROR_TYPES = (ModelInvalidRequestError, ModelNotFoundError)
+CALL_FAILURE_TYPES = (
+    ModelAuthenticationError,
+    ModelPermissionDeniedError,
+    ModelConnectionError,
+    ModelRateLimitError,
+    ModelAPIError,
+)
+
+
 def model_error_code(exc: Exception) -> str | None:
-    if isinstance(exc, TimeoutError):
+    if isinstance(exc, (TimeoutError, ModelTimeoutError)):
         return "MODEL_TIMEOUT"
+    if isinstance(exc, CONFIG_ERROR_TYPES):
+        return "MODEL_CONFIG_ERROR"
+    if isinstance(exc, CALL_FAILURE_TYPES):
+        return "MODEL_CALL_FAILED"
     if isinstance(exc, ConnectionError) or type(exc).__module__.startswith(("openai", "httpx")):
         return "MODEL_CALL_FAILED"
     return None
@@ -166,6 +190,10 @@ class RecoveryMiddleware(AgentMiddleware):
             if code is None:
                 raise
             ctx.error_code = code
+            if code == "MODEL_CONFIG_ERROR":
+                # A configuration fault is not a fallback candidate: let it reach
+                # the service layer as a stable service error, not INTERNAL_ERROR.
+                raise ServiceError(code, ctx.run.request_id) from None
             raise ModelCallFailure() from None
         finally:
             wrapper_latency_ms = (time.monotonic() - wrapper_start) * 1000

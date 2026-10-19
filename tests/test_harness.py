@@ -2,10 +2,54 @@ import json
 
 import pytest
 from conftest import ScriptedModel
+from langchain_core import exceptions as model_errors
 from langchain_core.messages import AIMessage
 
 from harness.runtime import Harness, RunInput
 from support_extraction.policy import contract
+
+
+class UnwrappedOpenAIError(Exception):
+    pass
+
+
+UnwrappedOpenAIError.__module__ = "openai._exceptions"
+
+
+class UnwrappedHTTPXError(Exception):
+    pass
+
+
+UnwrappedHTTPXError.__module__ = "httpx._exceptions"
+
+
+CALL_FAILURES = [
+    pytest.param(TimeoutError("timed out"), "MODEL_TIMEOUT", id="builtin-timeout"),
+    pytest.param(model_errors.ModelTimeoutError("timed out"), "MODEL_TIMEOUT", id="model-timeout"),
+    pytest.param(
+        model_errors.ModelAuthenticationError("bad key"), "MODEL_CALL_FAILED", id="authentication"
+    ),
+    pytest.param(
+        model_errors.ModelPermissionDeniedError("denied"), "MODEL_CALL_FAILED", id="permission"
+    ),
+    pytest.param(
+        model_errors.ModelConnectionError("unreachable"), "MODEL_CALL_FAILED", id="connection"
+    ),
+    pytest.param(
+        model_errors.ModelRateLimitError("slow down"), "MODEL_CALL_FAILED", id="rate-limit"
+    ),
+    pytest.param(model_errors.ModelAPIError("provider down"), "MODEL_CALL_FAILED", id="api-error"),
+    pytest.param(ConnectionError("unreachable"), "MODEL_CALL_FAILED", id="builtin-connection"),
+    pytest.param(UnwrappedOpenAIError("raw provider"), "MODEL_CALL_FAILED", id="openai-module"),
+    pytest.param(UnwrappedHTTPXError("raw transport"), "MODEL_CALL_FAILED", id="httpx-module"),
+]
+
+CONFIG_ERRORS = [
+    pytest.param(
+        model_errors.ModelInvalidRequestError("bad request"), id="invalid-request"
+    ),
+    pytest.param(model_errors.ModelNotFoundError("model missing"), id="not-found"),
+]
 
 
 class MemoryAudit:
@@ -95,6 +139,45 @@ async def test_transport_failure_is_not_output_repair():
     assert result.outcome == "FALLBACK" and result.error_code == "MODEL_TIMEOUT"
     assert len(model.calls) == 1 and result.repair_count == 0
     assert audit.attempts[0]["error_code"] == "MODEL_TIMEOUT"
+
+
+@pytest.mark.parametrize("exc,code", CALL_FAILURES)
+async def test_model_call_failures_fall_back_with_a_durable_review(exc, code):
+    harness, model, audit = make_harness([exc])
+    result = await harness.run(source())
+    assert result.outcome == "FALLBACK"
+    assert result.data is None
+    assert result.error_code == code
+    assert result.review_id == "review-test"
+    assert result.model_calls == 1 and result.repair_count == 0
+    assert len(model.calls) == 1
+    assert audit.attempts[0]["error_code"] == code
+    assert audit.attempts[0]["latency_ms"] >= 0
+
+
+@pytest.mark.parametrize("exc", CONFIG_ERRORS)
+async def test_model_config_errors_are_service_errors_without_a_review(exc):
+    from harness.contracts import ServiceError
+
+    harness, model, audit = make_harness([exc])
+    with pytest.raises(ServiceError) as raised:
+        await harness.run(source())
+    assert raised.value.code == "MODEL_CONFIG_ERROR"
+    assert raised.value.request_id == "request-test"
+    assert len(model.calls) == 1
+    assert audit.reviews == []
+    assert audit.attempts[0]["error_code"] == "MODEL_CONFIG_ERROR"
+    assert audit.attempts[0]["latency_ms"] >= 0
+
+
+async def test_unknown_exception_stays_internal_error():
+    from harness.contracts import ServiceError
+
+    harness, _, audit = make_harness([RuntimeError("unexpected")])
+    with pytest.raises(ServiceError) as raised:
+        await harness.run(source())
+    assert raised.value.code == "INTERNAL_ERROR"
+    assert audit.reviews == []
 
 
 async def test_unexpected_tool_call_is_never_executed(valid_json):
