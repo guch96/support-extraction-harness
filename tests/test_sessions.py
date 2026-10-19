@@ -228,6 +228,82 @@ async def test_oversized_supplement_is_rejected_without_appending(tmp_path, vali
         await app.close()
 
 
+async def test_message_limit_accepts_the_limit_and_rejects_one_more_without_side_effects(
+    tmp_path, valid_json
+):
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model)
+    try:
+        accepted = await app.submit(Submission(text="a" * 1000))
+        assert accepted.outcome == "SUCCESS" and len(model.calls) == 1
+        with pytest.raises(InputError, match="MESSAGE_TOO_LARGE"):
+            await app.submit(Submission(text="a" * 1001))
+        assert await app.reviews() == []
+        assert len(model.calls) == 1
+        assert app.store.conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+        assert app.store.conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0] == 1
+    finally:
+        await app.close()
+
+
+async def test_message_limit_counts_the_supplement_alone_not_task_history(
+    tmp_path, valid_json
+):
+    model = ScriptedModel(responses=[valid_json, valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model)
+    try:
+        first = await app.submit(Submission(text="a" * 1000))
+        second = await app.submit(
+            Submission(session_id=first.session_id, text="b" * 1000)
+        )
+        assert second.task_id == first.task_id and len(model.calls) == 2
+        with pytest.raises(InputError, match="MESSAGE_TOO_LARGE"):
+            await app.submit(Submission(session_id=first.session_id, text="c" * 1001))
+        restored = await app.restore(first.session_id)
+        assert [len(source["text"]) for source in restored["sources"]] == [1000, 1000]
+        assert len(model.calls) == 2
+    finally:
+        await app.close()
+
+
+async def test_cumulative_source_limit_still_applies_below_the_message_limit(
+    tmp_path, valid_json
+):
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(
+        tmp_path, lambda: model, max_message_chars=800, max_source_chars=1500
+    )
+    try:
+        first = await app.submit(Submission(text="a" * 800))
+        with pytest.raises(InputError, match="SOURCE_TOO_LARGE"):
+            await app.submit(Submission(session_id=first.session_id, text="b" * 800))
+        restored = await app.restore(first.session_id)
+        assert [len(source["text"]) for source in restored["sources"]] == [800]
+        assert len(model.calls) == 1
+    finally:
+        await app.close()
+
+
+async def test_message_limit_is_configurable(tmp_path, valid_json):
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(tmp_path, lambda: model, max_message_chars=5)
+    try:
+        assert (await app.submit(Submission(text="12345"))).outcome == "SUCCESS"
+        with pytest.raises(InputError, match="MESSAGE_TOO_LARGE"):
+            await app.submit(Submission(text="123456"))
+        assert len(model.calls) == 1
+    finally:
+        await app.close()
+
+
+@pytest.mark.parametrize("value", [0, -1, "1000", 1.5])
+async def test_invalid_message_limit_fails_at_startup(tmp_path, valid_json, value):
+    model = ScriptedModel(responses=[valid_json])
+    with pytest.raises(ValueError, match="max_message_chars"):
+        await ExtractionService.open(tmp_path, lambda: model, max_message_chars=value)
+    assert model.calls == []
+
+
 @pytest.mark.parametrize(
     "submission",
     [

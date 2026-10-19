@@ -6,9 +6,11 @@ import sys
 import uvicorn
 
 from entrypoints.api import create_app
+from support_extraction.service import positive_int
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+DEFAULT_MAX_MESSAGE_CHARS = 1000
 EVENT_LOGGER = "support_harness.events"
 HANDLER_NAME = "support_harness.json"
 
@@ -45,12 +47,29 @@ def configure_logging(stream=None):
     return handler
 
 
+def env_positive_int(name, default):
+    raw = os.getenv(name, str(default))
+    try:
+        return positive_int(name, int(raw))
+    except ValueError:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from None
+
+
 def main():
     configure_logging()
     port = int(os.getenv("HARNESS_PORT", str(DEFAULT_PORT)))
     session_ttl_days = int(os.getenv("HARNESS_SESSION_TTL_DAYS", "7"))
+    max_message_chars = env_positive_int(
+        "HARNESS_MAX_MESSAGE_CHARS", DEFAULT_MAX_MESSAGE_CHARS
+    )
     uvicorn.run(
-        create_app(ui=True, session_ttl_days=session_ttl_days), host=HOST, port=port
+        create_app(
+            ui=True,
+            session_ttl_days=session_ttl_days,
+            max_message_chars=max_message_chars,
+        ),
+        host=HOST,
+        port=port,
     )
 
 

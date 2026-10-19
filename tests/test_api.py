@@ -1,3 +1,4 @@
+import pytest
 from conftest import ScriptedModel
 from fastapi.testclient import TestClient
 from langchain_core import exceptions as model_errors
@@ -62,6 +63,40 @@ def test_app_passes_the_configured_session_ttl_to_the_store(tmp_path):
     )
     with TestClient(app) as client:
         assert client.app.state.service.store.session_ttl == 86400
+
+
+def test_http_message_limit_returns_413_with_a_distinct_error_code(tmp_path, valid_json):
+    model = ScriptedModel(responses=[valid_json])
+    app = create_app(
+        directory=tmp_path,
+        model_factory=lambda: model,
+        ui=False,
+        max_message_chars=10,
+    )
+    with TestClient(app) as client:
+        accepted = client.post("/extractions", json={"text": "x" * 10})
+        assert accepted.status_code == 200
+        session_id = accepted.json()["session_id"]
+        response = client.post(
+            "/extractions", json={"text": "x" * 11, "session_id": session_id}
+        )
+        assert response.status_code == 413
+        assert response.json()["error_code"] == "MESSAGE_TOO_LARGE"
+        assert response.json()["request_id"]
+        sources = client.get(f"/sessions/{session_id}").json()["sources"]
+        assert len(sources) == 1
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, "1000"])
+def test_create_app_rejects_an_invalid_message_limit(tmp_path, value):
+    with pytest.raises(ValueError, match="max_message_chars"):
+        create_app(
+            directory=tmp_path,
+            model_factory=lambda: None,
+            ui=False,
+            max_message_chars=value,
+        )
 
 
 def test_ui_is_mounted_beside_the_api_routes(tmp_path, valid_json):

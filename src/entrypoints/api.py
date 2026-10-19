@@ -12,7 +12,12 @@ from infrastructure.records import FixtureSource
 from infrastructure.sqlite import identifier
 from runtime.contracts import ServiceError
 from support_extraction.benchmark import BENCHMARK_RECORD_IDS, FIXTURE_PATH
-from support_extraction.service import ExtractionService, InputError, Submission
+from support_extraction.service import (
+    ExtractionService,
+    InputError,
+    Submission,
+    positive_int,
+)
 
 
 class ExtractionRequest(BaseModel):
@@ -30,10 +35,12 @@ def create_app(
     model_factory=None,
     ui=False,
     max_source_chars=20000,
+    max_message_chars=1000,
     source_reader=None,
     allowed_records=BENCHMARK_RECORD_IDS,
     session_ttl_days=7,
 ):
+    max_message_chars = positive_int("max_message_chars", max_message_chars)
     directory = directory or os.getenv("HARNESS_DATA_DIR", "runtime")
     model_factory = model_factory or configured_model
     source_reader = source_reader or FixtureSource(FIXTURE_PATH, allowed_records)
@@ -44,6 +51,7 @@ def create_app(
             Path(directory),
             model_factory,
             max_source_chars=max_source_chars,
+            max_message_chars=max_message_chars,
             source_reader=source_reader,
             allowed_records=allowed_records,
             session_ttl_days=session_ttl_days,
@@ -63,6 +71,7 @@ def create_app(
             "TASK_NOT_FOUND": 404,
             "TASK_BUSY": 409,
             "SOURCE_TOO_LARGE": 413,
+            "MESSAGE_TOO_LARGE": 413,
             "ACCESS_DENIED": 403,
             "REVIEW_NOT_FOUND": 404,
         }.get(exc.code, 422)

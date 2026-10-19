@@ -37,6 +37,22 @@ async def test_record_is_read_once_even_when_model_requires_repairs(tmp_path, va
         await app.close()
 
 
+async def test_record_content_is_not_checked_against_the_message_limit(tmp_path, valid_json):
+    source = RecordSource("记" * 1500)
+    model = ScriptedModel(responses=[valid_json])
+    app = await ExtractionService.open(
+        tmp_path, lambda: model, source_reader=source, allowed_records={"TX-001"}
+    )
+    try:
+        result = await app.submit(Submission(record_id="TX-001"))
+        assert result.outcome == "SUCCESS"
+        restored = await app.restore(result.session_id)
+        assert len(restored["sources"][0]["text"]) == 1500
+        assert source.reads == ["TX-001"] and len(model.calls) == 1
+    finally:
+        await app.close()
+
+
 async def test_unapproved_record_is_denied_before_reading_or_calling_model(tmp_path, valid_json):
     source = RecordSource("不应被读取")
     model = ScriptedModel(responses=[valid_json])

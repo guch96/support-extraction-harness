@@ -40,6 +40,13 @@ class InputError(ValueError):
         self.request_id = request_id or identifier()
 
 
+def positive_int(name: str, value) -> int:
+    """Return a validated positive integer option; invalid values fail at startup."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
 class ExtractionService:
     @classmethod
     async def open(
@@ -49,11 +56,13 @@ class ExtractionService:
         *,
         clock=time.time,
         max_source_chars=20000,
+        max_message_chars=1000,
         max_turns=20,
         source_reader=None,
         allowed_records=frozenset(),
         session_ttl_days=7,
     ):
+        max_message_chars = positive_int("max_message_chars", max_message_chars)
         service = cls()
         service.store = SQLiteStore(
             Path(directory) / "audit.sqlite3",
@@ -67,6 +76,7 @@ class ExtractionService:
         service.checkpointer = AsyncSqliteSaver(service.checkpoint_connection)
         service.model_factory = model_factory
         service.max_source_chars, service.max_turns = max_source_chars, max_turns
+        service.max_message_chars = max_message_chars
         service.source_reader = source_reader
         service.allowed_records = frozenset(allowed_records)
         service.store.recover_interrupted()
@@ -167,6 +177,11 @@ class ExtractionService:
             )
         ):
             raise InputError("INVALID_INPUT", request_id)
+        if (
+            submission.text is not None
+            and len(submission.text) > self.max_message_chars
+        ):
+            raise InputError("MESSAGE_TOO_LARGE", request_id)
         text = submission.text
         input_mode = "record" if submission.record_id is not None else "text"
         read_error = None
