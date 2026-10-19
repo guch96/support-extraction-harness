@@ -1,6 +1,6 @@
 # 客户对话提取 Harness：需求来源与决策摘要
 
-日期：2026-10-18。当前设计为代码授权取数、单个无业务工具的提取 Agent；尚未进入实施。
+日期：2026-10-18。当前设计为代码授权取数、单个无业务工具的提取 Agent；已于 2026-10-19 实施，验证见[README](../README.md)与[评测报告](EVALUATION.md)。
 
 [设计规格](specs/2026-10-18-support-extraction-harness-design.md)是当前需求与验收主入口；[上下文契约](PROMPT_CONTEXT.md)定义模型消息、提取/修复模板和页面/交接话术；[设计评审稿](DESIGN_REVIEW.md)提供架构图。[旧访谈与双角色草案](archive/2026-10-18-dual-role-prd.md)仅供追溯，不能覆盖当前决定。
 
