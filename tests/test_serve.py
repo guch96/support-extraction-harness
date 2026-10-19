@@ -50,10 +50,11 @@ def test_serve_builds_the_app_with_the_review_page(monkeypatch):
     )
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: None)
     monkeypatch.delenv("HARNESS_SESSION_TTL_DAYS", raising=False)
+    monkeypatch.delenv("HARNESS_MAX_MESSAGE_CHARS", raising=False)
 
     serve.main()
 
-    assert seen == {"ui": True, "session_ttl_days": 7}
+    assert seen == {"ui": True, "session_ttl_days": 7, "max_message_chars": 1000}
 
 
 @pytest.mark.parametrize(("configured", "expected"), [(None, 7), ("3", 3)])
@@ -72,3 +73,37 @@ def test_serve_reads_the_configured_session_ttl_days(monkeypatch, configured, ex
     serve.main()
 
     assert seen["session_ttl_days"] == expected
+
+
+@pytest.mark.parametrize(("configured", "expected"), [(None, 1000), ("2500", 2500)])
+def test_serve_reads_the_configured_message_limit(monkeypatch, configured, expected):
+    seen = {}
+    monkeypatch.setattr(serve, "configure_logging", lambda: None)
+    monkeypatch.setattr(
+        serve, "create_app", lambda **options: seen.update(options) or object()
+    )
+    monkeypatch.setattr(serve.uvicorn, "run", lambda app, **options: None)
+    if configured is None:
+        monkeypatch.delenv("HARNESS_MAX_MESSAGE_CHARS", raising=False)
+    else:
+        monkeypatch.setenv("HARNESS_MAX_MESSAGE_CHARS", configured)
+
+    serve.main()
+
+    assert seen["max_message_chars"] == expected
+
+
+@pytest.mark.parametrize("configured", ["0", "-5", "many"])
+def test_serve_rejects_an_invalid_message_limit_before_starting(monkeypatch, configured):
+    started = []
+    monkeypatch.setattr(serve, "configure_logging", lambda: None)
+    monkeypatch.setattr(serve, "create_app", lambda **options: object())
+    monkeypatch.setattr(
+        serve.uvicorn, "run", lambda app, **options: started.append(options)
+    )
+    monkeypatch.setenv("HARNESS_MAX_MESSAGE_CHARS", configured)
+
+    with pytest.raises(ValueError, match="HARNESS_MAX_MESSAGE_CHARS"):
+        serve.main()
+
+    assert started == []
