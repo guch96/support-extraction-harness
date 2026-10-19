@@ -121,6 +121,17 @@ async def test_demo_review_handler_renders_the_fallback_card_and_review_action(
         ]
         assert state["fallback_review_id"] in chat.format_panel(reviews)
 
+        safe = await chat.review_detail(service, state["fallback_review_id"])
+        assert all(
+            "issue_category:literal_error" in attempt["error_signature"]
+            for attempt in safe["attempts"]
+        )
+        rendered = chat.format_panel(safe)
+        assert rendered.count("raw_schema") == 3
+        assert "耗时 " in rendered and " ms" in rendered
+        assert "原文：" not in rendered
+        assert "TECHICAL" not in rendered
+
         detail = await chat.review_detail(
             service, state["fallback_review_id"], include_raw=True
         )

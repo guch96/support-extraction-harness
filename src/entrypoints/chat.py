@@ -584,11 +584,14 @@ async def review_detail(
         sources.append(item)
     attempts = []
     for attempt in review["attempts"]:
+        feedback = attempt.get("feedback") or {}
         item = {
             "attempt": attempt["attempt"],
             "latency_ms": attempt["latency_ms"],
             "error_code": attempt["error_code"],
             "raw_status": attempt["raw_status"],
+            "validation_stage": feedback.get("validation_stage"),
+            "error_signature": list(feedback.get("error_signature") or []),
         }
         if include_raw:
             item["raw"] = attempt.get("raw")
@@ -776,6 +779,13 @@ def _format_attempts(attempts: list[dict[str, Any]], *, include_raw: bool) -> li
         lines.append("- 无模型调用记录")
     for attempt in attempts:
         detail = f"- 第 {attempt['attempt']} 次：错误 {attempt['error_code'] or '无'}"
+        if attempt.get("latency_ms") is not None:
+            detail += f" · 耗时 {round(attempt['latency_ms'])} ms"
+        signature = attempt.get("error_signature") or []
+        stage = attempt.get("validation_stage")
+        if stage or signature:
+            parts = [part for part in (stage, " · ".join(signature)) if part]
+            detail += " · " + " · ".join(parts)
         if attempt["raw_status"] == "EXPIRED":
             detail += f" {EXPIRED_MARKER}"
         lines.append(detail)
