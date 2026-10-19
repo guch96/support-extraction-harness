@@ -189,6 +189,55 @@ class SQLiteStore:
         ]
         return result
 
+    def history(self, session_id):
+        session = self.conn.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if session is None:
+            raise LookupError("SESSION_NOT_FOUND")
+        if session["cleared"] or self.clock() - session["last_used"] >= self.session_ttl:
+            raise LookupError("SESSION_EXPIRED")
+        with self.transaction() as db:
+            db.execute("UPDATE sessions SET last_used=? WHERE id=?", (self.clock(), session_id))
+        tasks = self.conn.execute(
+            "SELECT id,revision,pii_seen,"
+            "(SELECT MIN(created_at) FROM sources WHERE sources.task_id=tasks.id) AS started_at "
+            "FROM tasks WHERE session_id=? ORDER BY started_at IS NULL, started_at, rowid",
+            (session_id,),
+        ).fetchall()
+        return [
+            {
+                "task_id": task["id"],
+                "revision": task["revision"],
+                "pii_seen": bool(task["pii_seen"]),
+                "sources": [
+                    {
+                        "sequence": source["sequence"],
+                        "kind": source["kind"],
+                        "text": source["safe_text"],
+                        "created_at": source["created_at"],
+                    }
+                    for source in self.sources(task["id"])
+                ],
+                "runs": [
+                    {
+                        "request_id": run["id"],
+                        "outcome": run["status"],
+                        "data": json.loads(run["data"]) if run["data"] else None,
+                        "error_code": run["error_code"],
+                        "model_calls": run["model_calls"],
+                        "repair_count": run["repair_count"],
+                        "source_revision": run["source_revision"],
+                        "created_at": run["created_at"],
+                        "review_id": run["review_id"],
+                    }
+                    for run in self.conn.execute(
+                        "SELECT * FROM runs WHERE task_id=? ORDER BY created_at, rowid",
+                        (task["id"],),
+                    )
+                ],
+            }
+            for task in tasks
+        ]
+
     def run_started(self, run):
         with self.transaction() as db:
             db.execute("UPDATE runs SET status='RUNNING' WHERE id=?", (run.request_id,))

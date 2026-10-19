@@ -14,6 +14,7 @@ class ChatEventsMiddleware(AgentMiddleware):
         ctx = request.runtime.context
         if ctx.feedback:
             self.sink.emit(Phase.REPAIRING, "正在修复")
-        else:
-            self.sink.emit(Phase.CALLING_MODEL, "正在调用模型")
-        return await handler(request)
+        self.sink.emit(Phase.CALLING_MODEL, "正在调用模型")
+        response = await handler(request)
+        self.sink.emit(Phase.VALIDATING, "正在校验输出")
+        return response
