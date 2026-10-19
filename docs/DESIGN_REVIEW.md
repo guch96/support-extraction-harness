@@ -7,7 +7,7 @@
 ```mermaid
 flowchart TB
     API["FastAPI：请求与 HTTP 映射"]
-    UI["Gradio：输入、恢复会话、结果与审核"]
+    UI["Gradio：聊天 + 审核（调用服务层）"]
     APP["应用组装：schema、业务规则、fixture 与适配器"]
 
     subgraph CORE["独立 Harness：确定性程序控制"]
@@ -52,7 +52,7 @@ flowchart TB
 
 授权拒绝、输入拒绝及安全处理/持久化/内部故障通过领域错误出口返回，由适配器映射 HTTP；图中的 REVIEW 仅在审核保存确认成功后产生 FALLBACK。
 
-入口 → 应用组装 → Harness，核心不依赖 FastAPI、Gradio、HTTP 对象或页面 State。模型、来源读取、持久化、审计及审核能力注入。来源适配器是普通代码能力，不注册给模型；输入文字和模型输出都不能新增读取调用。
+入口 → 应用组装 → Harness，核心不依赖 FastAPI、Gradio、HTTP 对象或页面 State。模型、来源读取、持久化、审计及审核能力注入。来源适配器是普通代码能力，不注册给模型；输入文字和模型输出都不能新增读取调用。聊天阶段事件只是只读进度投影，不参与控制流，也不改变授权、预算、校验、修复或兜底的所有权。
 
 ## 2. 模型与代码的职责
 

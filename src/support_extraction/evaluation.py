@@ -568,9 +568,9 @@ def _config_lines(report):
         f"| base_url | {_cell(report.provider.base_url or '未设置')} |",
         f"| 模型 | {_cell(report.provider.model)} |",
         f"| 提取话术版本 | `{EXTRACTION_PROMPT_VERSION}`"
-        "（`harness.prompts.EXTRACTION_PROMPT_VERSION`） |",
+        "（`runtime.prompts.EXTRACTION_PROMPT_VERSION`） |",
         f"| 修复话术版本 | `{REPAIR_PROMPT_VERSION}`"
-        "（`harness.prompts.REPAIR_PROMPT_VERSION`） |",
+        "（`runtime.prompts.REPAIR_PROMPT_VERSION`） |",
         "| API key | 仅从进程环境读取，未写入本报告、日志或仓库 |",
         f"| 生成时间 | {_cell(report.generated_at)} |",
     ]

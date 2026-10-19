@@ -9,7 +9,7 @@
 - [领域术语表](GLOSSARY.md)
 - [ADR 目录](docs/adr/)
 
-> **证据边界（请先读）**：116 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
+> **证据边界（请先读）**：135 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
 
 ## 1. 项目说明与状态
 
@@ -18,13 +18,13 @@
 | 原题硬性要求 | 本仓库的实现 | 证据 |
 |---|---|---|
 | 六字段强类型提取 | `support_extraction/policy.py` 的 Pydantic 模型；严格类型、枚举、拒绝额外字段、摘要最多 200 个 Unicode 码点 | `tests/test_harness.py`、`tests/test_benchmark_records.py` |
-| JSON/schema 校验，保存原始失败输出与错误签名 | `harness/validation.py` 校验原始响应；`infrastructure/sqlite.py` 保存每次 attempt 的原始输出、错误码与安全错误签名 | `tests/test_harness.py`、`tests/test_events.py` |
-| 有限修复 | `harness/runtime.py` 的 `RecoveryMiddleware`：每次运行最多 3 次模型调用、2 次额外修复；关闭 SDK 重试与自动纠错 | `tests/test_harness.py`、`tests/test_records.py` |
+| JSON/schema 校验，保存原始失败输出与错误签名 | `runtime/validation.py` 校验原始响应；`infrastructure/sqlite.py` 保存每次 attempt 的原始输出、错误码与安全错误签名 | `tests/test_harness.py`、`tests/test_events.py` |
+| 有限修复 | `middleware/budget.py` 与 `middleware/validation_repair.py`：每次运行最多 3 次模型调用、2 次额外修复；关闭 SDK 重试与自动纠错 | `tests/test_harness.py`、`tests/test_records.py` |
 | 修复耗尽后人工审核兜底 | FALLBACK 必须可靠保存 PENDING 审核项并返回 `review_id`；保存失败返回 500，不伪造审核编号 | `tests/test_harness.py`、`tests/test_api.py` |
 | 提示词注入缓解 | 来源先检测 PII、脱敏、标签中和，再用随机边界与 JSON 转义包装；模型无业务工具，记录读取由代码白名单控制 | `tests/test_benchmark_records.py`、`tests/test_records.py` |
-| 敏感信息保护 | 原文与脱敏来源分开保存；日志、错误、默认页面和修复材料只含脱敏内容 | `tests/test_events.py`、`tests/test_ui.py` |
+| 敏感信息保护 | 原文与脱敏来源分开保存；日志、错误、默认页面和修复材料只含脱敏内容 | `tests/test_events.py`、`tests/test_chat.py` |
 | 结构化日志 | 每次模型调用、校验失败、来源读取和运行结束输出单行 JSON 事件，关联 session/task/request 与话术版本 | `tests/test_events.py`、`tests/test_serve.py` |
-| 自动化测试 | 116 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
+| 自动化测试 | 135 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
 | README 说明架构、取舍与生产扩展 | 本文件；架构细节见[设计评审稿](docs/DESIGN_REVIEW.md) | 本文件 |
 
 ### 1.2 已确认扩展的实现范围
@@ -35,15 +35,16 @@
 - 代码授权的只读 fixture 读取；模型不能选择记录、扩大范围或注册工具。
 - SQLite 保存会话、任务、来源快照、提取 checkpoint、运行、attempt 和人工审核项。
 - FastAPI 提供 HTTP API，Gradio 提供同进程页面，两者共用服务层。
+- 聊天式演示页面替换原表单页：自由文本默认补充、样例/记录下拉新建任务、显式“新建任务”、当前任务状态条、会话恢复/清空/新建、阶段进度、FALLBACK 行动条与人工审核 tab；聊天不引入模型工具。
 - 受控原文与脱敏来源采用不同保留规则：原文默认七天，脱敏来源随活跃会话保留。
 
-明确未实现：双 Agent 演示、业务 CLI（评测命令除外）、人工编辑或关闭审核、多用户账户、分布式部署、自动重放中断请求。这些是范围取舍，不是遗漏，详见[第 6 节](#6-取舍)。
+明确未实现：双 Agent 演示、模型可调用的业务工具或工具审批、SSE/WebSocket 传输、静态回放、追问解释、业务 CLI（评测命令除外）、人工编辑或关闭审核、多用户账户、分布式部署、自动重放中断请求。这些是范围取舍，不是遗漏，详见[第 6 节](#6-取舍)。
 
 ### 1.3 哪些已由自动化测试证明，哪些只做了小样本评测
 
 | 证据 | 覆盖 | 能证明 | 不能证明 |
 |---|---|---|---|
-| 116 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/UI 话术 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
+| 135 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/聊天页话术 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
 | 真实模型评测（[报告](docs/EVALUATION.md)） | 7 个样例：TX-001、TX-002、TX-002 补充、TX-003、TX-004、TX-INJECT、TX-003-CLEAN；单次运行、单一配置 | 这些样例当次全部交付、攻击前后分类一致、未发现敏感原值外发 | 普遍准确率、其他模型/供应商、其他攻击方式、统计显著性 |
 
 本仓库对“已实现并测试”“已实现但只做过小样本评测”“明确未实现”分别陈述，不把替身测试当作真实模型结论。
@@ -55,7 +56,7 @@
 - Python 3.12（`pyproject.toml` 要求 `>=3.12`）。
 - 依赖见 `pyproject.toml`：LangChain、LangGraph SQLite checkpoint、FastAPI、Uvicorn、Gradio。
 - 一个 OpenAI 兼容的聊天补全端点与模型名；不需要与本仓库的任何评测配置相同。
-- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、116 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
+- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、135 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
 
 ### 2.2 环境变量
 
@@ -136,12 +137,18 @@ curl -sS 'http://127.0.0.1:8000/reviews/<review_id>?include_raw=true'
 
 | 模块 | 职责 |
 |---|---|
-| `src/harness/contracts.py` | 领域契约：`OutputContract`、`RunInput`、`RunResult`、`AuditSink`，以及 `SourceUnavailable` / `ServiceError` |
-| `src/harness/runtime.py` | `Harness` 与 `RecoveryMiddleware`：调用预算、超时、上下文投影、真实响应校验、唯一修复跳转和终止 |
-| `src/harness/validation.py` | 严格 JSON/schema 校验；错误路径、错误码与静态约束投影；后处理后再校验一次 |
-| `src/harness/context.py` | 构造安全来源包与修复反馈包；随机 nonce、JSON 转义、失败正文脱敏 |
-| `src/harness/failures.py` | 把供应商异常归类为 `MODEL_TIMEOUT`、`MODEL_CALL_FAILED`、`MODEL_CONFIG_ERROR` |
-| `src/harness/events.py` / `prompts.py` | 单行 JSON 事件与关联字段；`extraction.v1` / `repair.v1` 话术版本 |
+| `src/runtime/contracts.py` | 领域契约：`OutputContract`、`RunInput`、`RunResult`、`AuditSink`，以及 `SourceUnavailable` / `ServiceError` |
+| `src/runtime/engine.py` | `Harness`：组装图与四个 middleware，执行一次运行并写出阶段事件与终态 |
+| `src/runtime/state.py` | 图 state 与 `RunContext`：本轮来源、预算计数、反馈和截止时间 |
+| `src/runtime/validation.py` | 严格 JSON/schema 校验；错误路径、错误码与静态约束投影；后处理后再校验一次 |
+| `src/runtime/context.py` | 构造安全来源包与修复反馈包；随机 nonce、JSON 转义、失败正文脱敏 |
+| `src/runtime/failures.py` | 把供应商异常归类为 `MODEL_TIMEOUT`、`MODEL_CALL_FAILED`、`MODEL_CONFIG_ERROR` |
+| `src/runtime/events.py` / `prompts.py` | 单行 JSON 事件与关联字段；`extraction.v1` / `repair.v1` 话术版本 |
+| `src/middleware/budget.py` | 调用预算与统一截止时间：每次运行最多 3 次模型调用，拒绝已超时的调用 |
+| `src/middleware/audit.py` | 记录每次真实调用的原始响应、错误码、SDK/wrapper 耗时与话术版本 |
+| `src/middleware/validation_repair.py` | 校验真实响应；唯一所有权决定接受、跳转修复或终止 |
+| `src/middleware/chat_events.py` | 把模型阶段投影到 `PhaseSink`；只读，不影响控制权 |
+| `src/streaming/events.py` / `phase_sink.py` | `ChatEvent`、`Phase` 与页面消费的有序 `PhaseSink` |
 | `src/support_extraction/policy.py` | 六字段 Pydantic schema、业务字段规则、交付前 `finalize` |
 | `src/support_extraction/safety.py` | 信用卡、身份证/NRIC、密码语境检测；脱敏与 `<...>` 标签中和 |
 | `src/support_extraction/service.py` | 应用服务：来源授权/读取、先保存来源、安全检查、运行 Harness、审核与维护 |
@@ -153,10 +160,12 @@ curl -sS 'http://127.0.0.1:8000/reviews/<review_id>?include_raw=true'
 | `src/infrastructure/sqlite.py` | 审计库、会话/来源/运行/attempt/审核存储、checkpoint 清理与七天维护 |
 | `src/entrypoints/api.py` | FastAPI 路由、请求校验、领域错误到 HTTP 的映射 |
 | `src/entrypoints/serve.py` | 回环 Uvicorn 启动与逐行 JSON 日志格式 |
-| `src/entrypoints/ui.py` | Gradio 页面与纯协程处理函数；默认只展示脱敏内容 |
-| `tests/` | 116 个测试；真实 middleware + 模型替身 + 临时 SQLite |
+| `src/entrypoints/chat.py` | Gradio 聊天页与人工审核 tab 的纯协程处理函数；默认只展示已校验字段与脱敏内容 |
+| `tests/` | 135 个测试；真实 middleware + 模型替身 + 临时 SQLite |
 
-依赖方向是：`entrypoints` → `support_extraction` → `harness`；`infrastructure` 实现接口并由外层注入。`harness` 不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
+依赖方向是：`entrypoints` → `support_extraction` → `runtime` 与 `middleware`；`streaming` 提供被运行时与页面共用的只读事件类型；`infrastructure` 实现接口并由外层注入。核心不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
+
+本仓库没有 `src/tools/`，提取 Agent 的 `tools=[]`；模型无业务工具是设计决定而非遗漏，见 [ADR-0009](docs/adr/0009-keep-the-chat-demo-on-a-fixed-pipeline.md)。
 
 #### 架构图
 
@@ -165,7 +174,7 @@ flowchart TB
     subgraph ENTRY["入口层 entrypoints"]
         SERVE["serve.py<br/>127.0.0.1 + 逐行 JSON 日志"]
         API["api.py<br/>FastAPI 路由与 HTTP 映射"]
-        UI["ui.py<br/>Gradio /ui（调用服务层）"]
+        CHAT["chat.py<br/>Gradio /ui：聊天 + 审核（调用服务层）"]
     end
 
     subgraph APP["应用层 support_extraction"]
@@ -176,12 +185,19 @@ flowchart TB
         EVAL["evaluation.py<br/>真实模型评测命令"]
     end
 
-    subgraph CORE["Harness 核心 harness"]
-        HARNESS["runtime.Harness<br/>来源快照 → 图执行 → 结果收口"]
-        MW["RecoveryMiddleware<br/>预算 · 超时 · 校验 · 修复跳转"]
-        VALID["validation.validate_response"]
-        CTX["context<br/>来源包 / 修复包投影"]
-        EVENTS["events<br/>单行 JSON 事件"]
+    subgraph CORE["运行时 runtime + middleware"]
+        HARNESS["runtime.engine.Harness<br/>组装图 · 来源快照 · 终态"]
+        BUDGET["middleware.budget<br/>调用预算 · 截止时间"]
+        AUDIT["middleware.audit<br/>调用审计 · 原始响应"]
+        REPAIR["middleware.validation_repair<br/>校验 · 唯一修复跳转"]
+        PHASES["middleware.chat_events<br/>只读阶段事件"]
+        VALID["runtime.validation.validate_response"]
+        CTX["runtime.context<br/>来源包 / 修复包投影"]
+        EVENTS["runtime.events<br/>单行 JSON 事件"]
+    end
+
+    subgraph STREAM["流式事件 streaming"]
+        SINK["ChatEvent · PhaseSink<br/>reading → … → succeeded/failed"]
     end
 
     subgraph INFRA["基础设施 infrastructure"]
@@ -193,7 +209,8 @@ flowchart TB
 
     SERVE --> API
     API --> SVC
-    UI --> SVC
+    CHAT --> SVC
+    CHAT --> SINK
     EVAL --> SVC
     SVC --> POLICY
     SVC --> SAFETY
@@ -202,15 +219,19 @@ flowchart TB
     SVC --> STORE
     SVC --> HARNESS
     HARNESS --> CTX
-    HARNESS --> MW
-    MW --> VALID
-    MW --> MODEL
-    MW --> EVENTS
+    HARNESS --> BUDGET
+    HARNESS --> AUDIT
+    HARNESS --> REPAIR
+    HARNESS --> PHASES
+    REPAIR --> VALID
+    AUDIT --> MODEL
+    AUDIT --> EVENTS
+    PHASES --> SINK
     HARNESS --> CHECKPOINT
     EVAL --> MODEL
 ```
 
-`harness` 只依赖注入的 `AuditSink`、`OutputContract` 与模型句柄；SQLite、FastAPI、Gradio 都在核心之外。
+`runtime` 与 `middleware` 只依赖注入的 `AuditSink`、`OutputContract` 与模型句柄；SQLite、FastAPI、Gradio 都在核心之外。
 
 ### 3.2 请求到结果
 
@@ -269,6 +290,8 @@ sequenceDiagram
 - 模型调用异常：超时/鉴权/连接/限流 → `FALLBACK` + PENDING 审核；模型配置错误（不存在或请求非法）→ 500 `MODEL_CONFIG_ERROR`，不产生审核项。
 - 来源侧：未授权 → 403 且不读取；显式 `SourceUnavailable` → PENDING 审核；其他策略异常 → 500 `SOURCE_POLICY_FAILED`。
 
+聊天页复用同一条消息流：每次发送只调用一次 `ExtractionService.submit`，并把 `PhaseSink` 传入运行。页面按事件顺序把占位气泡替换为阶段文本，进度语义为 `reading → calling_model → repairing → validating → succeeded/failed`：记录模式先发 `reading`；每次模型调用前发 `calling_model`（修复轮次先发 `repairing`），调用后发 `validating`；终态只发一次 `succeeded` 或 `failed`。这些阶段事件是只读投影，不改变会话、预算、校验、修复或审核所有权，页面也不在阶段之间调用模型或读取来源。
+
 ### 3.3 六字段 schema
 
 | 字段 | 类型与约束 |
@@ -319,6 +342,22 @@ JSON/schema 错误共享同一修复预算。模型调用异常、超时和来�
 - 受控原文与每次模型原始输出各自默认保留七天，按保存时间计算；活跃会话、新增补充或新审核项**不延长**旧原文保留期。
 - 原文到期后仍用保留的脱敏来源继续提取；审核详情把对应证据标为 `EXPIRED`，不把脱敏损失补齐。
 - 重启会恢复会话与 checkpoint，但**不自动续跑**中断的模型调用；已发生的中断运行被标记为 FALLBACK 并生成 PENDING 审核项。
+
+### 3.8 页面：聊天与人工审核
+
+页面 `/ui` 提供“聊天”和“人工审核”两个 tab，回调直接调用服务层。
+
+- **自由文本是补充**：输入框默认把文本作为当前任务的补充或修正；提交先可靠保存来源，再重新提取。空白文本显示输入错误卡。
+- **新建任务**：点“新建任务”后，状态条显示“下一条自由文本将新建任务”；下一条自由文本建立新任务。样例/记录下拉每次发送都新建任务，不混入当前客户事实。
+- **状态条**：显示当前任务 ID、来源条数、会话 ID；没有任务时显示“当前任务：尚未开始”。
+- **会话控制**：会话编号可复制；可恢复历史会话、清空当前会话（删除 checkpoint）或新建会话（只清页面，不删除旧会话）。
+- **阶段流**：等待期间页面把 `reading`（仅记录读取）、`calling_model`、`repairing`、`validating`、`succeeded` / `failed` 渲染为占位文本；阶段事件只读。
+- **结果卡**：显示 `SUCCESS` / `REPAIRED` / `FALLBACK`、模型调用与修复次数、请求编号、六字段表格，以及折叠的“结构化结果（已校验）”JSON。FALLBACK 没有有效字段，结果显示失败说明、调用/修复次数、请求编号与审核编号。
+- **FALLBACK 行动条**：审核保存成功时显示“本次 FALLBACK · 审核编号 ...”，点“查看审核”切到人工审核 tab 并回填该编号。
+- **人工审核**：默认只显示脱敏来源与处理记录；勾选“显式展示受控原文”后才显示原文；过期证据明确标记“原文已过期”。
+- **只展示已校验字段**：页面不展示、不流式输出未校验的模型原始响应；这些内容只在审核入口显式查看。
+
+页面的完整话术见[上下文契约第 7 节](docs/PROMPT_CONTEXT.md)，并与 `src/entrypoints/chat.py` 的常量逐字一致。
 
 ## 4. 失败与可见性
 
@@ -376,7 +415,7 @@ FALLBACK 的 `review_id` 只在审核项保存成功后返回；保存失败是�
 2. `GET /reviews/{review_id}`：默认只返回脱敏来源、每次 attempt 的错误码与 `raw_status`；不包含原文。
 3. `GET /reviews/{review_id}?include_raw=true`：显式请求受控原文。`raw_status` 为 `AVAILABLE`、`EXPIRED` 或 `UNAVAILABLE`；到期证据明确标记，不复制旧原文续期。
 
-页面 `/ui` 的“人工审核” tab 可以刷新列表并查看详情，但**详情需要手工粘贴 `review_id`**；列表项没有可点击的详情链接。这是已知短板，不是隐藏行为。审核项当前只支持查看，不支持编辑、关闭或重新处理。
+页面 `/ui` 的“人工审核” tab 可以刷新列表并查看详情；FALLBACK 行动条的“查看审核”会切到该 tab 并回填 `review_id`，其他情况下仍需手工粘贴；列表项本身没有可点击的详情链接。这是已知短板，不是隐藏行为。审核项当前只支持查看，不支持编辑、关闭或重新处理。
 
 ### 4.5 结构化日志
 
@@ -398,15 +437,15 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 PYTHONPATH=src .venv/bin/python -m ruff check .
 ```
 
-当前结果：`116 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
+当前结果：`135 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
 
 - 正常提取、修复后恢复、预算耗尽、空响应、非法 JSON、错误枚举/类型、缺字段、额外字段、超长摘要、意外工具调用。
 - 模型超时/调用失败/配置错误/未配置；来源不存在、内容非法、授权拒绝、策略故障。
 - 先保存来源、补充在 FALLBACK 后仍生效、同任务并发拒绝、会话隔离、恢复、过期、清空、重启恢复与中断转审核。
 - PII 检测与脱敏、卡号尾号不单独触发、注入文本中和、模型实际输入不含敏感原值。
 - 上下文投影只含 system + 来源包（修复时加最近失败）、无旧答案/旧修复/其他任务材料、工具配置为空。
-- HTTP 状态映射、审核列表/详情/原文显式开关、页面话术、JSON 日志字段与关联、评测 NOT RUN 路径。
-- 分层约束：`harness` 不依赖入口或领域词汇；应用层注入话术与预算。
+- HTTP 状态映射、审核列表/详情/原文显式开关、聊天页话术与阶段事件、JSON 日志字段与关联、评测 NOT RUN 路径。
+- 分层约束：`runtime` 与 `middleware` 不依赖入口或领域词汇；应用层注入话术与预算；模型工具配置为空。
 
 模型替身证明的是控制流、边界和失败出口，**不是**真实模型的分类准确率、摘要质量或注入鲁棒性。
 
@@ -466,8 +505,10 @@ PYTHONPATH=src .venv/bin/python -m support_extraction.evaluation \
 - PII 检测是启发式正则，存在误报（例如长数字串被识别为卡号）与漏报（例如换一种写法、图片或上下文隐含的敏感信息）。
 - 提示层注入缓解不保证模型语义正确；真实评测只覆盖 TX-003、TX-INJECT 等少量攻击样例。
 - 未做浏览器端真实点击链路的端到端测试；Gradio 处理函数和 `/ui` 挂载有测试，但“打开浏览器、点击、观察页面”仍靠人工冒烟。
-- `/ui` 的人工审核详情需要手工填写 `review_id`；列表项不可点击。
-- 未实现人工编辑、关闭审核、重新处理、自动重放中断请求、长期记忆和双 Agent 演示。
+- 聊天页的阶段事件只在单个进程内通过内存 `PhaseSink` 传递，没有 SSE/WebSocket；刷新页面后阶段文本消失，也没有静态回放。
+- `gradio>=6,<7`（当前验证 6.30）的 `Chatbot` 只支持 `type="messages"`；页面按 messages 结构渲染，不能退回 tuples 格式。
+- 除 FALLBACK 行动条回填外，`/ui` 的人工审核详情仍需手工填写 `review_id`；列表项不可点击。
+- 未实现模型业务工具或工具审批、SSE/WebSocket、静态回放、追问解释、人工编辑、关闭审核、重新处理、自动重放中断请求、长期记忆和双 Agent 演示。
 - `uv` 路径已在干净 checkout 验证；已有 `.venv` 下的 `PYTHONPATH=src .venv/bin/python ...` 命令同样可用。
 - 真实评测是单次小样本，供应商和模型参数见[评测报告](docs/EVALUATION.md)；更换模型或提示词后需要重新评测。
 - 六字段结构合法不等于事实正确、完整或具有操作授权；`actionable_steps` 只用于展示和记录。
@@ -483,6 +524,7 @@ PYTHONPATH=src .venv/bin/python -m support_extraction.evaluation \
 - [ADR-0003](docs/adr/0003-keep-harness-independent-of-entrypoints.md)：Harness 独立于入口。
 - [ADR-0006](docs/adr/0006-separate-source-and-raw-retention.md)：脱敏来源与受控原文分开保留。
 - [ADR-0008](docs/adr/0008-use-one-tool-free-extraction-agent.md)：单提取 Agent 与代码授权取数。
+- [ADR-0009](docs/adr/0009-keep-the-chat-demo-on-a-fixed-pipeline.md)：聊天式演示保持固定链路，模型仍无工具。
 - [PRD 草案](docs/PRD_DESIGN_DRAFT.md)：原题要求与逐轮决策摘要。
 
 文档中的“设计规格”是行为契约；本 README 描述当前实现与证据边界。若文档状态行与实现进度冲突，以代码、测试和[评测报告](docs/EVALUATION.md)为准，并在后续文档任务中修正。

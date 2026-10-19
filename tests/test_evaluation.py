@@ -124,8 +124,8 @@ async def test_scripted_evaluation_covers_all_cases_and_renders_sections():
         assert section in text
     assert "extraction.v1" in text
     assert "repair.v1" in text
-    assert "harness.prompts.EXTRACTION_PROMPT_VERSION" in text
-    assert "harness.prompts.REPAIR_PROMPT_VERSION" in text
+    assert "runtime.prompts.EXTRACTION_PROMPT_VERSION" in text
+    assert "runtime.prompts.REPAIR_PROMPT_VERSION" in text
 
     by_id = {case.case_id: case for case in report.cases}
     assert by_id["TX-001"].outcome == "SUCCESS"
