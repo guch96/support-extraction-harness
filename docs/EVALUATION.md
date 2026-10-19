@@ -10,8 +10,8 @@
 | 供应商 | OpenAI-compatible (langchain_openai.ChatOpenAI) |
 | base_url | https://token-plan-cn.xiaomimimo.com/v1 |
 | 模型 | mimo-v2.6-pro |
-| 提取话术版本 | `extraction.v1`（`harness.prompts.EXTRACTION_PROMPT_VERSION`） |
-| 修复话术版本 | `repair.v1`（`harness.prompts.REPAIR_PROMPT_VERSION`） |
+| 提取话术版本 | `extraction.v1`（`runtime.prompts.EXTRACTION_PROMPT_VERSION`） |
+| 修复话术版本 | `repair.v1`（`runtime.prompts.REPAIR_PROMPT_VERSION`） |
 | API key | 仅从进程环境读取，未写入本报告、日志或仓库 |
 | 生成时间 | 2026-10-19T19:48:19+08:00 |
 | max_retries | 0 |
