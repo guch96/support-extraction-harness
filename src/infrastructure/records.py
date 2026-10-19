@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from harness.contracts import SourceUnavailable
+
 
 class FixtureSource:
     """Read-only source over a fixed, packaged benchmark dataset."""
@@ -15,7 +17,7 @@ class FixtureSource:
         try:
             text = self._records[record_id]
         except KeyError:
-            raise LookupError("RECORD_NOT_FOUND") from None
+            raise SourceUnavailable("RECORD_NOT_FOUND") from None
         if not isinstance(text, str) or not text.strip():
-            raise LookupError("INVALID_RECORD")
+            raise SourceUnavailable("INVALID_RECORD")
         return text

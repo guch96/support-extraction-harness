@@ -7,7 +7,7 @@ from pathlib import Path
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from harness.contracts import RunInput, RunResult, ServiceError
+from harness.contracts import RunInput, RunResult, ServiceError, SourceUnavailable
 from harness.runtime import Harness, event
 from infrastructure.sqlite import SQLiteStore, identifier
 from support_extraction.policy import contract
@@ -125,7 +125,7 @@ class ExtractionService:
         ):
             raise InputError("INVALID_INPUT", request_id)
         text = submission.text
-        read_failed = False
+        read_error = None
         if submission.record_id is not None:
             access_started = time.monotonic()
             if submission.record_id not in self.allowed_records or self.source_reader is None:
@@ -137,21 +137,27 @@ class ExtractionService:
                 )
                 raise InputError("ACCESS_DENIED", request_id)
             started = time.monotonic()
+            failure = None
             try:
                 async with asyncio.timeout(10):
                     text = await self.source_reader.read(submission.record_id)
                 if not isinstance(text, str) or not text.strip():
-                    raise OSError("INVALID_SOURCE_RESPONSE")
-            except (OSError, LookupError, TimeoutError):
-                read_failed = True
+                    raise SourceUnavailable("INVALID_SOURCE_RESPONSE")
+            except SourceUnavailable as exc:
+                read_error = exc.code
+                failure = read_error
                 text = ""
+            except Exception:
+                failure = "SOURCE_POLICY_FAILED"
+                raise ServiceError(failure, request_id, source_saved=False) from None
             finally:
                 event(
                     "source_read",
                     request_id=request_id,
                     reason="ACCESS_GRANTED",
                     latency_ms=round((time.monotonic() - started) * 1000, 3),
-                    outcome="FAILED" if read_failed else "RECEIVED",
+                    outcome="FAILED" if failure else "RECEIVED",
+                    error_code=failure,
                 )
         try:
             session_id, task_id = self.store.reserve(
@@ -167,7 +173,7 @@ class ExtractionService:
             raise InputError(str(exc), request_id) from None
         source_saved = False
         try:
-            if read_failed:
+            if read_error is not None:
                 result = RunResult(
                     session_id=session_id,
                     task_id=task_id,
@@ -175,19 +181,29 @@ class ExtractionService:
                     outcome="FALLBACK",
                     model_calls=0,
                     repair_count=0,
-                    error_code="SOURCE_READ_FAILED",
+                    error_code=read_error,
                 )
                 result.review_id = self.store.run_finished(result)
                 event("run_finished", **result.model_dump(exclude={"data"}))
                 return result
-            known = sensitive_values(text)
-            self.store.append_source(request_id, text, sanitize(text, known), bool(known))
+            try:
+                known = sensitive_values(text)
+                safe_text = sanitize(text, known)
+            except Exception:
+                raise ServiceError("SAFETY_PROCESSING_FAILED", request_id) from None
+            self.store.append_source(request_id, text, safe_text, bool(known))
             source_saved = True
             task = self.store.task(task_id)
             sources = self.store.sources(task_id)
-            known = tuple(
-                value for s in sources if s["raw_text"] for value in sensitive_values(s["raw_text"])
-            )
+            try:
+                known = tuple(
+                    value
+                    for s in sources
+                    if s["raw_text"]
+                    for value in sensitive_values(s["raw_text"])
+                )
+            except Exception:
+                raise ServiceError("SAFETY_PROCESSING_FAILED", request_id) from None
             run = RunInput(
                 session_id,
                 task_id,
