@@ -55,7 +55,7 @@
 - Python 3.12（`pyproject.toml` 要求 `>=3.12`）。
 - 依赖见 `pyproject.toml`：LangChain、LangGraph SQLite checkpoint、FastAPI、Uvicorn、Gradio。
 - 一个 OpenAI 兼容的聊天补全端点与模型名；不需要与本仓库的任何评测配置相同。
-- `uv`（推荐）。**说明**：本机 WSL 环境未安装 `uv`，因此实际验证的是 2.3 的 `.venv` 命令；`uv run` 路径按项目配置编写，未在本机执行。
+- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、116 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
 
 ### 2.2 环境变量
 
@@ -87,11 +87,17 @@ $env:OPENAI_MODEL = "your-model-name"
 
 ### 2.3 安装与启动
 
-推荐使用 `uv`：
+推荐使用 `uv`（已在干净 checkout 验证）：
 
 ```bash
-uv sync
+uv sync --frozen
 uv run python -m entrypoints.serve
+```
+
+若已按 2.2 创建 `.env`，也可让 `uv` 直接加载，省去手动 export：
+
+```bash
+uv run --env-file .env python -m entrypoints.serve
 ```
 
 若已在仓库根创建 `.venv` 并安装依赖，可使用本机验证过的路径：
@@ -462,7 +468,7 @@ PYTHONPATH=src .venv/bin/python -m support_extraction.evaluation \
 - 未做浏览器端真实点击链路的端到端测试；Gradio 处理函数和 `/ui` 挂载有测试，但“打开浏览器、点击、观察页面”仍靠人工冒烟。
 - `/ui` 的人工审核详情需要手工填写 `review_id`；列表项不可点击。
 - 未实现人工编辑、关闭审核、重新处理、自动重放中断请求、长期记忆和双 Agent 演示。
-- `uv` 未在本机实测；已验证的是已有 `.venv` 下的 `PYTHONPATH=src .venv/bin/python ...` 命令。
+- `uv` 路径已在干净 checkout 验证；已有 `.venv` 下的 `PYTHONPATH=src .venv/bin/python ...` 命令同样可用。
 - 真实评测是单次小样本，供应商和模型参数见[评测报告](docs/EVALUATION.md)；更换模型或提示词后需要重新评测。
 - 六字段结构合法不等于事实正确、完整或具有操作授权；`actionable_steps` 只用于展示和记录。
 
