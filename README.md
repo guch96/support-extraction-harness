@@ -9,7 +9,7 @@
 - [领域术语表](GLOSSARY.md)
 - [ADR 目录](docs/adr/)
 
-> **证据边界（请先读）**：156 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
+> **证据边界（请先读）**：175 个自动化测试证明的是控制流与边界，不是模型语义正确率；真实模型评测只覆盖 7 个样例、单次运行，只代表那些样例在那次配置下的表现。两者都不构成事实认证，也不证明能抵御所有提示词注入。
 
 ## 演示（面试官视角）
 
@@ -109,7 +109,7 @@ uv run python -m entrypoints.serve
 | 提示词注入缓解 | 来源先检测 PII、脱敏、标签中和，再用随机边界与 JSON 转义包装；模型无业务工具，记录读取由代码白名单控制 | `tests/test_benchmark_records.py`、`tests/test_records.py` |
 | 敏感信息保护 | 原文与脱敏来源分开保存；日志、错误、默认页面和修复材料只含脱敏内容 | `tests/test_events.py`、`tests/test_chat.py` |
 | 结构化日志 | 每次模型调用、校验失败、来源读取和运行结束输出单行 JSON 事件，关联 session/task/request 与话术版本 | `tests/test_events.py`、`tests/test_serve.py` |
-| 自动化测试 | 156 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
+| 自动化测试 | 175 个测试，使用真实 middleware、图、读取策略和临时 SQLite，模型用可编排替身 | `pytest -q` |
 | README 说明架构、取舍与生产扩展 | 本文件；架构细节见[设计评审稿](docs/DESIGN_REVIEW.md) | 本文件 |
 
 ### 1.2 已确认扩展的实现范围
@@ -130,7 +130,7 @@ uv run python -m entrypoints.serve
 
 | 证据 | 覆盖 | 能证明 | 不能证明 |
 |---|---|---|---|
-| 156 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/聊天页话术、`diagnostics` 持久化与历史回放 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
+| 175 个 `pytest` 测试 | 真实 middleware、图跳转、工具配置、校验、预算、SQLite、HTTP/聊天页话术、`diagnostics` 持久化与历史回放 | 控制流、失败出口、持久化、安全边界按设计执行 | 真实模型的业务准确率与注入鲁棒性 |
 | 真实模型评测（[报告](docs/EVALUATION.md)） | 7 个样例：TX-001、TX-002、TX-002 补充、TX-003、TX-004、TX-INJECT、TX-003-CLEAN；单次运行、单一配置 | 这些样例当次全部交付、攻击前后分类一致、未发现敏感原值外发 | 普遍准确率、其他模型/供应商、其他攻击方式、统计显著性 |
 
 本仓库对“已实现并测试”“已实现但只做过小样本评测”“明确未实现”分别陈述，不把替身测试当作真实模型结论。
@@ -142,7 +142,7 @@ uv run python -m entrypoints.serve
 - Python 3.12（`pyproject.toml` 要求 `>=3.12`）。
 - 依赖见 `pyproject.toml`：LangChain、LangGraph SQLite checkpoint、FastAPI、Uvicorn、Gradio。
 - 一个 OpenAI 兼容的聊天补全端点与模型名；不需要与本仓库的任何评测配置相同。
-- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、156 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
+- `uv`（推荐）。`uv` 路径已在干净 checkout 上验证：`uv sync --frozen`、175 个测试、`/ui/` 与 `/reviews` 冒烟均通过。
 
 ### 2.2 环境变量
 
@@ -154,6 +154,7 @@ uv run python -m entrypoints.serve
 | `HARNESS_DATA_DIR` | 否 | `runtime` | SQLite 审计库与 checkpoint 目录 |
 | `HARNESS_PORT` | 否 | `8000` | 服务端口；主机固定为 `127.0.0.1` |
 | `HARNESS_SESSION_TTL_DAYS` | 否 | `7` | 会话连续未使用多少天后过期（单位：天）；原文保留期仍独立固定为 7 天 |
+| `HARNESS_MAX_MESSAGE_CHARS` | 否 | `1000` | 单条直接文本的字符上限；按本条 userMessage 计，与任务累计 20,000 字符分开计算 |
 
 仓库提供[`.env.example`](.env.example)，只含占位值，不含任何真实凭据。应用**不会自动加载** `.env`；请显式导出变量。例如在 bash 中：
 
@@ -235,7 +236,7 @@ PYTHONPATH=src .venv/bin/python -m entrypoints.serve
 | `src/entrypoints/api.py` | FastAPI 路由、请求校验、领域错误到 HTTP 的映射 |
 | `src/entrypoints/serve.py` | 回环 Uvicorn 启动与逐行 JSON 日志格式 |
 | `src/entrypoints/chat.py` | Gradio 聊天页与人工审核 tab 的纯协程处理函数；自然语言回答、结果卡、修复轨迹与“本次处理”折叠区，历史回放同一份事实 |
-| `tests/` | 156 个测试；真实 middleware + 模型替身 + 临时 SQLite |
+| `tests/` | 175 个测试；真实 middleware + 模型替身 + 临时 SQLite |
 
 依赖方向是：`entrypoints` → `support_extraction` → `runtime` 与 `middleware`；`streaming` 提供被运行时与页面共用的只读事件类型；`infrastructure` 实现接口并由外层注入。核心不依赖 FastAPI、Gradio、HTTP 对象或页面状态。
 
@@ -309,8 +310,8 @@ flowchart TB
 
 ### 3.2 请求到结果
 
-1. **接收与校验**：`POST /extractions` 严格解析请求体，拒绝未知字段；校验文本/记录二选一以及已提供 ID 的组合。
-2. **预留会话与任务**：检查会话是否存在/过期、任务是否属于该会话、同任务是否有活动请求；检查来源总长（默认 20,000 字符）与回合数（默认 20）。
+1. **接收与校验**：`POST /extractions` 严格解析请求体，拒绝未知字段；校验文本/记录二选一以及已提供 ID 的组合。直接文本超过单条消息上限（默认 1,000 字符）在此拒绝，不读取来源、不预留任务、不调用模型。
+2. **预留会话与任务**：检查会话是否存在/过期、任务是否属于该会话、同任务是否有活动请求；检查任务累计来源总长（默认 20,000 字符）与回合数（默认 20）。
 3. **来源读取（记录模式）**：只允许代码白名单中的 ID；适配器只读、最多一次、10 秒超时。授权拒绝返回 403，实际读取与模型都不执行。
 4. **先保存来源**：检测 PII、脱敏、中和标签，把受控原文与脱敏来源在同一事务中保存；保存失败不调用模型。模型失败不撤销已保存的补充或修正。
 5. **进入 Harness**：把当前任务的完整脱敏来源快照、版本号和累计 PII 标记投影为来源包；每次请求重新构造 system + 来源包。
@@ -461,6 +462,8 @@ FALLBACK 的 `review_id` 只在审核项保存成功后返回；保存失败是�
 | `RECORD_NOT_FOUND` / `INVALID_RECORD` | 记录不存在 / 记录内容为空或非文本 | 是，FALLBACK | 200 |
 | `INVALID_SOURCE_RESPONSE` | 适配器返回空或非文本内容 | 是，FALLBACK | 200 |
 | `SOURCE_POLICY_FAILED` | 读取策略自身异常，停止读取 | 否 | 500 |
+| `MESSAGE_TOO_LARGE` | 单条直接文本超过单条消息上限（默认 1,000 字符）；不读取、不保存、不调用模型 | 否 | 413 |
+| `SOURCE_TOO_LARGE` | 任务累计来源超过 20,000 字符，或回合数超限 | 否 | 413 |
 | `ACCESS_DENIED` | 记录不在白名单；读取与模型均未执行 | 否 | 403 |
 | `SAFETY_PROCESSING_FAILED` | PII/脱敏/安全序列化异常，停止模型外发 | 否 | 500 |
 | `PERSISTENCE_FAILED` | 来源、审计、checkpoint 或审核保存失败 | 否（不能伪造审核） | 500 |
@@ -479,13 +482,50 @@ FALLBACK 的 `review_id` 只在审核项保存成功后返回；保存失败是�
 | `SUCCESS`、`REPAIRED`、已保存审核的 `FALLBACK` | 200 |
 | 来源读取授权拒绝 | 403 |
 | 请求字段不合法、文本/记录参数组合错误 | 422 |
-| 输入或累计来源材料超限 | 413 |
+| 单条消息超过上限，或任务累计来源超过上限 | 413 |
 | 同任务已有活动请求 | 409 |
 | 会话过期或已清空 | 410 |
 | 会话/任务/审核项不存在 | 404 |
 | 安全、策略、配置、持久化或内部错误 | 500 |
 
 500 响应包含 `error_code`、`request_id`，以及适用时的 `source_saved`。入口和页面不能仅凭 HTTP 500 推断补充是否已保存：`source_saved=true` 表示来源已入库但后续失败，`false` 表示来源未保存，`null` 表示无法确认。
+
+#### 单条消息与任务累计两条长度上限
+
+| 上限 | 默认 | 计算方式 | 配置 | 超限错误码 |
+|---|---:|---|---|---|
+| 单条 userMessage | 1,000 字符 | 只算本条直接文本，不与任务历史累加 | `HARNESS_MAX_MESSAGE_CHARS`、`create_app(max_message_chars=...)`、`ExtractionService.open(max_message_chars=...)` | `MESSAGE_TOO_LARGE`（413） |
+| 任务累计来源 | 20,000 字符 | 当前任务已保存来源的累计长度 | `create_app(max_source_chars=...)`、`ExtractionService.open(max_source_chars=...)` | `SOURCE_TOO_LARGE`（413） |
+
+- 等于上限允许，超过才拒绝。单条检查发生在读取记录、预留任务与保存来源之前：被拒绝的请求不保存来源、不调用模型、不创建审核项；响应中的 `request_id` 可用于对账。
+- 记录读取模式的内容不按单条 1,000 字符检查；它仍受任务累计 20,000 字符与读取策略约束（读取接口返回 1,500 字符的记录不会被该规则拒绝）。
+- 两条规则同时生效：例如单条上限 800、任务累计上限 1,500 时，同一任务的两条 800 字符补充中，第二条返回 `SOURCE_TOO_LARGE`，任务只保留第一条。
+
+1,000 字符接受、1,001 字符拒绝：
+
+```bash
+python -c 'import json; print(json.dumps({"text": "a" * 1000}))' > /tmp/msg-1000.json
+python -c 'import json; print(json.dumps({"text": "a" * 1001}))' > /tmp/msg-1001.json
+
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8000/extractions \
+  -H 'Content-Type: application/json' --data-binary @/tmp/msg-1000.json
+# 200
+
+curl -sS -X POST http://127.0.0.1:8000/extractions \
+  -H 'Content-Type: application/json' --data-binary @/tmp/msg-1001.json
+# HTTP 413：{"error_code":"MESSAGE_TOO_LARGE","request_id":"..."}
+```
+
+任务累计超限（同一 `session_id` 已累计 19,500 字符后再提交 1,000 字符）：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/extractions \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id": "<session_id>", "text": "..."}'
+# HTTP 413：{"error_code":"SOURCE_TOO_LARGE","request_id":"..."}
+```
+
+两条上限均可配置；`max_message_chars` 为 0、负数或非整数时，服务在启动时明确抛出 `ValueError`，不会静默回退到默认值。
 
 ### 4.4 人工审核怎么用
 
@@ -543,7 +583,7 @@ PYTHONPATH=src .venv/bin/python -m pytest -q
 PYTHONPATH=src .venv/bin/python -m ruff check .
 ```
 
-当前结果：`156 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
+当前结果：`175 passed`，`ruff` 通过。测试使用 `tests/conftest.py::ScriptedModel` 模型替身，但运行**真实**的 LangChain middleware、图、来源读取策略、服务层和临时 SQLite，不使用网络或付费 API。覆盖范围包括：
 
 - 正常提取、修复后恢复、预算耗尽、空响应、非法 JSON、错误枚举/类型、缺字段、额外字段、超长摘要、意外工具调用。
 - 模型超时/调用失败/配置错误/未配置；来源不存在、内容非法、授权拒绝、策略故障。

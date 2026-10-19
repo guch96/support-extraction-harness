@@ -451,6 +451,22 @@ async def test_blank_text_renders_an_input_error_card(tmp_path, valid_json):
         await service.close()
 
 
+async def test_message_too_large_renders_its_own_input_notice(tmp_path, valid_json):
+    service, model = await open_service(tmp_path, [valid_json])
+    try:
+        states = await collect(
+            chat.send_text(service, "x" * 1001, None, None, False)
+        )
+        card = assistant_texts(states[-1]["messages"])[-1]
+        assert "ERROR" in card and "MESSAGE_TOO_LARGE" in card
+        assert "这次请求没有完成：单条消息超过长度上限（`MESSAGE_TOO_LARGE`）。" in card
+        assert chat.INPUT_NOTICES["MESSAGE_TOO_LARGE"] in card
+        assert "来源材料超过上限" not in card
+        assert model.calls == []
+    finally:
+        await service.close()
+
+
 async def test_record_send_repairs_and_the_next_text_supplements_it(tmp_path, valid_json):
     source = FixtureSource(FIXTURE_PATH, BENCHMARK_RECORD_IDS)
     service, model = await open_service(
