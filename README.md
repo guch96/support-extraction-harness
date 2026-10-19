@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已实现核心 Harness、SQLite 会话生命周期与 FastAPI 入口；Gradio 页面、真实模型评测与交付说明尚待完成。正式要求见 [设计规格](docs/specs/2026-10-18-support-extraction-harness-design.md)，架构图见 [设计评审稿](docs/DESIGN_REVIEW.md)，需求来源与逐轮决策见 [PRD 草案](docs/PRD_DESIGN_DRAFT.md)。
+已实现核心 Harness、SQLite 会话生命周期、FastAPI/Gradio 入口与真实模型评测；评测结果见[评测报告](docs/EVALUATION.md)。正式要求见 [设计规格](docs/specs/2026-10-18-support-extraction-harness-design.md)，架构图见 [设计评审稿](docs/DESIGN_REVIEW.md)，需求来源与逐轮决策见 [PRD 草案](docs/PRD_DESIGN_DRAFT.md)。
 
 **当前采用单提取 Agent 设计。** 正式规格区分招聘题目的硬性要求和用户确认的扩展方向；模型输入与提取、修复、页面及交接话术见[上下文契约](docs/PROMPT_CONTEXT.md)。
 
@@ -33,6 +33,12 @@ curl -sS -X POST http://127.0.0.1:8000/extractions \
 
 缺少 `OPENAI_API_KEY` 或 `OPENAI_MODEL` 时提取返回 500 `MODEL_NOT_CONFIGURED`，不会静默切换模型替身。
 
+真实模型评测会产生供应商调用；缺少 `OPENAI_API_KEY` 或 `OPENAI_MODEL` 时输出 NOT RUN（未执行）并以退出码 2 结束，不发起模型调用：
+
+```bash
+PYTHONPATH=src python -m support_extraction.evaluation --output docs/EVALUATION.md
+```
+
 ## 开发方向
 
 - LangChain 原生 middleware 作为 Harness 基座。
@@ -46,7 +52,7 @@ curl -sS -X POST http://127.0.0.1:8000/extractions \
 - 接收补充后先可靠保存再调用模型，提取失败不撤销已保存的补充或修正。
 - 自动化测试使用模型替身，运行真实 middleware、工具策略与 SQLite；真实模型的业务及注入样例评测单独报告。
 - 结构化日志与可重复演示。
-- FastAPI 提供 HTTP API，Gradio 提供演示页面，共用服务层，不实现 CLI。
+- FastAPI 提供 HTTP API，Gradio 提供演示页面，共用服务层，不实现业务 CLI（真实模型评测命令除外）。
 - Harness 作为独立模块提供原生执行能力，不依赖 FastAPI、Gradio 或 HTTP 请求与响应对象。
 
 ## 后续会话入口
